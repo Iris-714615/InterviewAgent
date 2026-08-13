@@ -1,0 +1,17 @@
+# 环境
+.env
+.venv/
+venv/
+
+# 数据
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
