@@ -1,47 +1,36 @@
-"""面试官 Agent - 多方向 x 多角色,基于个人资料提问"""
+"""面试官 Agent。"""
 from __future__ import annotations
-
+import json
 from typing import AsyncIterator
-
 from app.agents.prompts import build_interviewer_prompt
-from app.core.llm import ModelRouter, llm_service
-from app.models.schemas import ChatMessage, InterviewDirection, InterviewRole
+from app.core.llm import ModelRouter, RouteDecision, llm_service
+from app.models.schemas import AbilityProfile, ChatMessage, InterviewDirection, InterviewRole
 from app.rag.retriever import format_context_for_prompt, retrieve_context
 
 
 class InterviewerAgent:
-    """面试官 Agent:根据方向/角色生成提问,支持流式输出。
-    动态路由:简单输入用 flash 省,复杂技术回答用 pro。"""
-
-    async def reply(
-        self,
-        user_message: str,
-        direction: InterviewDirection,
-        role: InterviewRole,
-        history: list[ChatMessage],
-        use_rag: bool = True,
-    ) -> AsyncIterator[str]:
-        # 1. 检索个人资料(可选)
-        context = ""
-        if use_rag:
-            docs = retrieve_context(user_message, top_k=4)
-            context = format_context_for_prompt(user_message, docs)
-
-        # 2. 构建 system prompt
-        system_prompt = build_interviewer_prompt(direction, role, context)
-
-        # 3. 组装消息
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        for m in history:
-            messages.append({"role": m.role.value, "content": m.content})
+    async def reply(self, user_message: str, direction: InterviewDirection, role: InterviewRole, history: list[ChatMessage],
+                    use_rag: bool = True, profile: dict | None = None, rag_docs: list | None = None,
+                    session_id: str | None = None, message_id: str | None = None, decision: RouteDecision | None = None) -> AsyncIterator[str]:
+        docs = rag_docs
+        if docs is None: docs, _ = retrieve_context(user_message, session_id, top_k=4, enabled=use_rag)
+        messages: list[dict] = [{"role": "system", "content": build_interviewer_prompt(direction, role, format_context_for_prompt(user_message, docs), profile)}]
+        messages.extend({"role": m.role.value, "content": m.content} for m in history)
         messages.append({"role": "user", "content": user_message})
+        decision = decision or ModelRouter.decide("interviewer", user_message)
+        async for chunk in llm_service.chat_stream(messages, decision.model, 0.7, "interviewer", decision.reason, session_id, message_id): yield chunk
 
-        # 4. 动态选择模型(省钱):简单输入 flash,复杂回答 pro
-        model = ModelRouter.select("interviewer", user_message)
-
-        # 5. 流式输出
-        async for chunk in llm_service.chat_stream(messages, model=model, temperature=0.7):
-            yield chunk
+    async def analyze_answer(self, question: str, answer: str, profile: dict | None, session_id: str | None = None) -> AbilityProfile | None:
+        prompt = ("结合上一题更新累计能力画像。严格依据回答证据，输出指定 schema。\n旧画像:" + json.dumps(profile or {}, ensure_ascii=False)
+                  + f"\n问题:{question}\n回答:{answer}")
+        decision = ModelRouter.decide("interviewer", answer)
+        try:
+            parsed = await llm_service.structured_chat([{"role": "user", "content": prompt}], AbilityProfile, decision.model, 0.1, 800,
+                                                       "ability_profile", decision.reason, session_id)
+            parsed.answer_count = max(parsed.answer_count, int((profile or {}).get("answer_count", 0)) + 1)
+            return parsed
+        except Exception:
+            return None
 
 
 interviewer_agent = InterviewerAgent()

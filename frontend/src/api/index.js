@@ -2,13 +2,15 @@
 const BASE = '/api/v1'
 
 async function request(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
-  })
+  const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
+  const res = await fetch(url, { headers, ...options })
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`请求失败 ${res.status}: ${text}`)
+    let message = '服务暂时不可用，请稍后重试'
+    try {
+      const data = await res.json()
+      if (data?.detail && typeof data.detail === 'string') message = data.detail
+    } catch (e) {}
+    throw new Error(`请求失败 ${res.status}: ${message}`)
   }
   return res.json()
 }
@@ -26,17 +28,22 @@ export function getSessionMessages(sessionId) {
   return request(`${BASE}/interview/sessions/${sessionId}/messages`)
 }
 
+export function getServiceStatus() {
+  return request(`${BASE}/status`)
+}
+
 // ============ 面试对话(流式) ============
 /**
  * 流式面试对话,通过 fetch + ReadableStream 解析 SSE。
  * @param {Object} payload - ChatRequest 字段
  * @param {Object} handlers - 回调集合
  * @param {(chunk: string) => void} handlers.onChunk - 收到文本块
- * @param {(model: string) => void} handlers.onMeta - 收到本次使用的模型信息
- * @param {() => void} handlers.onDone - 完成
+ * @param {(meta: Object) => void} handlers.onMeta - 收到模型与 RAG 信息
+ * @param {(profile: Object) => void} handlers.onProfile - 收到实时能力画像
+ * @param {(done: Object) => void} handlers.onDone - 完成
  * @param {(err: Error) => void} handlers.onError - 错误
  */
-export async function chatStream(payload, { onChunk, onMeta, onDone, onError } = {}) {
+export async function chatStream(payload, { onChunk, onMeta, onProfile, onDone, onError } = {}) {
   try {
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
@@ -48,6 +55,7 @@ export async function chatStream(payload, { onChunk, onMeta, onDone, onError } =
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let finished = false
 
     while (true) {
       const { done, value } = await reader.read()
@@ -74,20 +82,25 @@ export async function chatStream(payload, { onChunk, onMeta, onDone, onError } =
             return
           }
           if (event === 'done') {
-            onDone && onDone()
+            finished = true
+            if (onDone) await onDone(parsed)
             return
           }
           if (event === 'meta') {
-            onMeta && onMeta(parsed.model)
+            onMeta && onMeta(parsed)
             continue
           }
-          if (parsed.content) onChunk && onChunk(parsed.content)
+          if (event === 'profile') {
+            onProfile && onProfile(parsed)
+            continue
+          }
+          if (parsed.content) onChunk && onChunk(parsed.content, parsed)
         } catch (e) {
           // 非 JSON,跳过
         }
       }
     }
-    onDone && onDone()
+    if (!finished) onDone && onDone({ finish: true })
   } catch (err) {
     onError && onError(err)
   }
@@ -159,23 +172,63 @@ export function getEvaluation(sessionId) {
 }
 
 // ============ 资料库 ============
-export function uploadFile(file) {
+export function uploadFile(file, { documentType = 'other', sessionId = null, retentionDays = 30, redact = true } = {}) {
   const formData = new FormData()
   formData.append('file', file)
-  return fetch(`${BASE}/knowledge/upload`, { method: 'POST', body: formData }).then((r) => r.json())
+  formData.append('document_type', documentType)
+  formData.append('retention_days', String(retentionDays))
+  formData.append('redact', String(redact))
+  if (sessionId) formData.append('session_id', sessionId)
+  return request(`${BASE}/knowledge/upload`, { method: 'POST', body: formData })
 }
 
-export function retrieveKnowledge(query, topK = 4) {
-  return request(`${BASE}/knowledge/retrieve`, {
+export function listFiles(sessionId = null) {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
+  return request(`${BASE}/knowledge/files${query}`).then((d) => d.files || [])
+}
+
+export function deleteDocument(documentId) {
+  return request(`${BASE}/knowledge/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' })
+}
+
+export function generateProfile(sessionId, documentType = null) {
+  const query = new URLSearchParams()
+  query.set('session_id', sessionId)
+  if (documentType) query.set('document_type', documentType)
+  return request(`${BASE}/knowledge/profile/generate?${query}` , { method: 'POST' })
+}
+
+export function getProfiles(sessionId) {
+  return request(`${BASE}/knowledge/profiles?session_id=${encodeURIComponent(sessionId)}`)
+}
+
+export function getPrivacyStatus(sessionId) {
+  return request(`${BASE}/knowledge/privacy?session_id=${encodeURIComponent(sessionId)}`)
+}
+
+export function updatePrivacy(sessionId, retentionDays) {
+  return request(`${BASE}/knowledge/privacy?session_id=${encodeURIComponent(sessionId)}`, { method: 'PUT', body: JSON.stringify({ retention_days: retentionDays }) })
+}
+
+export function clearPrivacyData() {
+  return request(`${BASE}/privacy/data`, { method: 'DELETE' })
+}
+
+export function getGrowthSummary(sessionId) {
+  return request(`${BASE}/evaluation/${encodeURIComponent(sessionId)}/growth`)
+}
+
+export function getRoutingMetrics(sessionId = null) {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
+  return request(`${BASE}/metrics/routing${query}`)
+}
+
+
+export function retrieveKnowledge(query, topK = 4, sessionId = null, documentType = null) {
+  const params = new URLSearchParams({ session_id: sessionId || '' })
+  if (documentType) params.set('document_type', documentType)
+  return request(`${BASE}/knowledge/retrieve?${params}`, {
     method: 'POST',
-    body: JSON.stringify({ query, top_k: topK })
+    body: JSON.stringify({ query, top_k: topK, session_id: sessionId, document_type: documentType })
   })
-}
-
-export function listFiles() {
-  return request(`${BASE}/knowledge/files`).then((d) => d.files)
-}
-
-export function deleteFile(source) {
-  return request(`${BASE}/knowledge/files/${encodeURIComponent(source)}`, { method: 'DELETE' })
 }

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { listSessions, getEvaluation } from '../api'
+import { listSessions, getEvaluation, getGrowthSummary, getRoutingMetrics } from '../api'
 import { useChatStore } from '../stores/chat'
 
 const router = useRouter()
@@ -34,6 +34,8 @@ const roleLabel = { technical: '技术面', hr: 'HR面', behavioral: '行为面'
 // 面试记录历史
 const sessions = ref([])
 const loadingSessions = ref(false)
+const growth = ref(null)
+const routing = ref(null)
 
 async function loadSessions() {
   loadingSessions.value = true
@@ -47,7 +49,13 @@ async function loadSessions() {
 }
 
 // 已评估的会话(用于得分趋势)
-const scoredSessions = () => sessions.value.filter((s) => s.overall_score != null)
+const scoredSessions = () => sessions.value.filter((s) => s.overall_score != null && (!s.evaluation_status || s.evaluation_status === 'completed'))
+const serviceLabel = computed(() => {
+  if (chat.serviceStatusError) return '不可用'
+  if (!chat.serviceStatus) return '检查中'
+  if (chat.serviceStatus.demo_mode) return '演示模式'
+  return chat.serviceStatus.status === 'ok' ? '正常' : '降级'
+})
 
 // ============ 成长概览计算属性 ============
 const avgScore = computed(() => {
@@ -135,6 +143,7 @@ async function reviewSession(s) {
 
 onMounted(() => {
   loadSessions()
+  chat.loadServiceStatus()
 })
 </script>
 
@@ -149,6 +158,19 @@ onMounted(() => {
       <div class="hero-actions">
         <button class="btn btn-primary" @click="router.push('/chat')">开始模拟面试 →</button>
         <button class="btn btn-ghost" @click="router.push('/knowledge')">先上传资料</button>
+      </div>
+    </div>
+
+    <div class="card service-card" :class="`service-${chat.serviceStatus?.status || 'loading'}`">
+      <div>
+        <strong>服务状态：{{ serviceLabel }}</strong>
+        <span v-if="chat.serviceStatusError" class="service-error">{{ chat.serviceStatusError }}</span>
+      </div>
+      <div v-if="chat.serviceStatus" class="service-details">
+        <span>模型密钥：{{ chat.serviceStatus.api_key_configured ? '已配置' : '未配置' }}</span>
+        <span>RAG 文档：{{ chat.serviceStatus.rag_document_count }}</span>
+        <span>会话存储：{{ chat.serviceStatus.session_writable ? '可写' : '不可写' }}</span>
+        <span v-if="chat.serviceStatus.demo_mode">DEMO 已启用</span>
       </div>
     </div>
 
@@ -307,6 +329,11 @@ onMounted(() => {
   gap: 12px;
   flex-wrap: wrap;
 }
+.service-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; }
+.service-ok { border-color: rgba(52, 211, 153, .35); }
+.service-degraded { border-color: rgba(245, 158, 11, .45); }
+.service-details { display: flex; gap: 14px; flex-wrap: wrap; color: var(--text-soft); font-size: 13px; }
+.service-error { margin-left: 10px; color: var(--danger); font-size: 12px; }
 .grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -519,6 +546,10 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .service-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .grid {
     grid-template-columns: repeat(2, 1fr);
   }

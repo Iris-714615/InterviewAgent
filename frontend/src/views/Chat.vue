@@ -15,6 +15,7 @@ const scrollEl = ref(null)
 const restoreTip = ref('') // 恢复提示文案
 onMounted(async () => {
   // 已有会话(如从总览回顾)无需恢复
+  chat.loadServiceStatus()
   if (chat.sessionId) return
   const ok = await chat.restoreFromLocal()
   if (ok) {
@@ -37,6 +38,25 @@ const roles = [
 ]
 
 const canSend = computed(() => input.value.trim() && !chat.streaming)
+const profileDimensions = computed(() => Object.entries(chat.profile?.dimensions || {}).map(([name, value]) => ({
+  name,
+  score: Number(value?.score || 0),
+  evidence: value?.evidence || ''
+})))
+const ragLabel = computed(() => ({
+  used: '已启用', empty: '无匹配', disabled: '已关闭', unconfigured: '未配置', error: '异常'
+}[chat.rag?.status] || '等待检索'))
+const modeLabel = computed(() => ({ normal: '正常', ok: '正常', degraded: '降级', demo: '演示' }[chat.runtimeMode] || chat.runtimeMode))
+const profileConfidence = computed(() => {
+  const value = chat.profile?.confidence
+  return typeof value === 'number' ? `${Math.round(value * 100)}%` : '暂无数值'
+})
+
+function profileTrend(score) {
+  if (score >= 80) return '强项'
+  if (score >= 60) return '稳定'
+  return '待提升'
+}
 
 async function scrollToBottom() {
   await nextTick()
@@ -119,7 +139,7 @@ function exportChat() {
   lines.push('')
   for (const m of chat.messages) {
     // 带教练标记的消息显示为"教练提示"
-    const speaker = m.coach ? '教练提示' : messageRoleMap[m.role] || m.role
+    const speaker = m.channel === 'coach' ? (m.role === 'user' ? '向教练提问' : '教练提示') : messageRoleMap[m.role] || m.role
     lines.push(`### ${speaker}`)
     lines.push(m.content || '')
     lines.push('')
@@ -488,7 +508,7 @@ watch(
     if (prev && !streaming) {
       // 流式刚结束,找最后一条面试官消息
       const last = chat.messages[chat.messages.length - 1]
-      if (last && last.role === 'assistant' && !last.coach && last.content) {
+      if (last && last.role === 'assistant' && last.channel === 'interview' && last.content) {
         playAutoTTS(last.content)
       }
     }
@@ -562,11 +582,46 @@ watch(
         <span class="tag tag-coach">辅导模式</span>
         接下来你输入的内容,教练会直接给出参考答案与思路(不会进入面试对话)
       </div>
+      <div class="insight-strip">
+        <span class="status-chip" :class="`mode-${chat.runtimeMode}`">服务：{{ modeLabel }}</span>
+        <span class="status-chip" :class="`rag-${chat.rag?.status || 'pending'}`">
+          RAG：{{ ragLabel }}<template v-if="chat.rag?.count">（{{ chat.rag.count }} 条）</template>
+        </span>
+        <span v-if="chat.rag?.sources?.length" class="source-text" :title="chat.rag.sources.join('、')">
+          来源：{{ chat.rag.sources.join('、') }}
+        </span>
+        <span v-if="routeSummary" class="source-text" :title="`实际成本 ${chat.routingMetrics.estimated_cost}，平均延迟 ${chat.routingMetrics.average_latency_ms}ms`">
+          路由：{{ routeSummary }}
+        </span>
+        <span v-if="chat.serviceStatusError" class="status-error">{{ chat.serviceStatusError }}</span>
+      </div>
       <!-- 刷新后恢复提示 -->
       <div v-if="restoreTip" class="restore-tip">
         <span class="restore-icon">↺</span>
         <span>{{ restoreTip }}</span>
         <button class="restore-close" @click="restoreTip = ''">×</button>
+      </div>
+    </div>
+
+    <div v-if="chat.profile" class="profile-card card">
+      <div class="profile-head">
+        <div>
+          <strong>实时能力画像</strong>
+          <span class="profile-count">已分析 {{ chat.profile.answer_count || 0 }} 个回答</span>
+        </div>
+        <span class="confidence">置信度：{{ profileConfidence }}</span>
+      </div>
+      <div v-if="profileDimensions.length" class="profile-dimensions">
+        <div v-for="d in profileDimensions" :key="d.name" class="profile-dimension" :title="d.evidence">
+          <div class="profile-dim-head"><span>{{ d.name }}</span><b>{{ d.score.toFixed(0) }}</b></div>
+          <div class="profile-bar"><span :style="{ width: `${d.score}%` }"></span></div>
+          <small>{{ profileTrend(d.score) }}<template v-if="d.evidence"> · {{ d.evidence }}</template></small>
+        </div>
+      </div>
+      <div class="profile-focus">
+        <div v-if="chat.profile.strengths?.length"><b>重点：</b>{{ chat.profile.strengths.join('、') }}</div>
+        <div v-if="chat.profile.gaps?.length" class="profile-gaps"><b>薄弱项：</b>{{ chat.profile.gaps.join('、') }}</div>
+        <div v-if="chat.profile.follow_up_strategy"><b>追问策略：</b>{{ chat.profile.follow_up_strategy }}</div>
       </div>
     </div>
 
@@ -583,11 +638,13 @@ watch(
       <template v-else>
         <ChatMessage
           v-for="(m, i) in chat.messages"
-          :key="i"
+          :key="m.message_id"
           :role="m.role"
           :content="m.content"
-          :coach="m.coach"
+          :coach="m.channel === 'coach'"
           :model="m.model"
+          :route-reason="m.route_reason"
+          :retrieval="m.retrieval"
           :streaming="chat.streaming && i === chat.messages.length - 1 && m.role === 'assistant'"
         />
       </template>
@@ -701,6 +758,35 @@ watch(
   align-items: center;
   gap: 8px;
 }
+.insight-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.status-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-soft);
+}
+.mode-normal, .mode-ok, .rag-used { color: var(--success); border-color: rgba(52, 211, 153, .35); }
+.mode-degraded, .rag-empty, .rag-unconfigured { color: var(--warning); border-color: rgba(245, 158, 11, .35); }
+.mode-demo, .rag-error { color: var(--danger); border-color: rgba(239, 68, 68, .35); }
+.source-text { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.status-error { color: var(--danger); }
+.profile-card { margin-bottom: 12px; padding: 14px 18px; }
+.profile-head, .profile-dim-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.profile-count, .confidence { margin-left: 10px; color: var(--text-soft); font-size: 12px; }
+.profile-dimensions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.profile-dimension { min-width: 0; font-size: 13px; }
+.profile-dimension small { display: block; margin-top: 4px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-bar { height: 5px; margin-top: 5px; border-radius: 3px; overflow: hidden; background: var(--bg-hover); }
+.profile-bar span { display: block; height: 100%; background: var(--gradient-primary); }
+.profile-focus { display: grid; gap: 5px; margin-top: 12px; font-size: 12px; color: var(--text-soft); }
+.profile-gaps { color: var(--warning); }
 .restore-tip {
   margin-top: 10px;
   padding: 8px 14px;
@@ -974,6 +1060,19 @@ watch(
   }
   .config-label {
     display: none;
+  }
+  .profile-dimensions {
+    grid-template-columns: 1fr;
+  }
+  .profile-head {
+    align-items: flex-start;
+  }
+  .confidence {
+    margin-left: 0;
+    white-space: nowrap;
+  }
+  .source-text {
+    max-width: 100%;
   }
   .spacer {
     display: none;

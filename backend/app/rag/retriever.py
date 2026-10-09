@@ -1,48 +1,52 @@
-"""RAG 检索器 - 从个人资料库检索相关内容,拼接成上下文"""
+"""强制按会话隔离的 RAG 检索与引用格式化。"""
 from __future__ import annotations
-
 from langchain_core.documents import Document
-
 from app.core.config import settings
+from app.models.schemas import RetrievalEvidence
 from app.rag.vectorstore import vector_store
+from app.services.session_store import session_store
 
 
-def _embedding_configured() -> bool:
-    """embedding key 是否已正确配置(非占位符)。"""
-    key = settings.api_key
-    return bool(key) and not key.startswith("sk-your")
+def retrieval_meta(status: str, docs: list[Document] | None = None) -> dict:
+    docs = docs or []
+    return {"status": status, "count": len(docs), "sources": list(dict.fromkeys(d.metadata.get("source", "未知") for d in docs))}
 
 
-def retrieve_context(query: str, top_k: int = 4) -> list[Document]:
-    """检索与 query 最相关的资料片段。
-    embedding 未配置时直接返回空,优雅降级(不影响面试对话)。"""
-    if not _embedding_configured():
-        return []
+def retrieve_context(query: str, session_id: str | None = None, top_k: int = 4, enabled: bool = True,
+                     document_types: list[str] | None = None) -> tuple[list[Document], dict]:
+    if not enabled:
+        return [], retrieval_meta("disabled")
+    if not session_id:
+        return [], retrieval_meta("empty")
+    if not settings.api_key or settings.api_key.startswith("sk-your"):
+        return [], retrieval_meta("unconfigured")
     try:
-        return vector_store.search(query, top_k=top_k)
+        docs = vector_store.search(query, session_id=session_id, top_k=top_k, document_types=document_types,
+                                   document_ids=session_store.get_bindings(session_id))
+        meta = retrieval_meta("used" if docs else "empty", docs)
+        meta["evidence"] = [c.model_dump(mode="json") for c in citations_from_docs(docs)]
+        return docs, meta
     except Exception:
-        # 知识库为空或检索异常时返回空,不影响对话
-        return []
+        return [], retrieval_meta("error")
+
+
+def citations_from_docs(docs: list[Document]) -> list[RetrievalEvidence]:
+    result = []
+    for index, doc in enumerate(docs, 1):
+        meta = doc.metadata
+        label = f"K{index}"
+        result.append(RetrievalEvidence(chunk_id=str(meta.get("chunk_id", "")), source=meta.get("source", "未知"),
+            document_type=meta.get("document_type", "other"), page=meta.get("page"), line=meta.get("line"), section=meta.get("section"),
+            score=float(meta.get("score", 0)), excerpt=doc.page_content[:240], label=label, citation_label=label))
+    return result
 
 
 def build_context_text(docs: list[Document]) -> str:
-    """把检索到的片段拼接成上下文文本。"""
-    if not docs:
-        return ""
-    parts = []
-    for i, d in enumerate(docs, 1):
-        source = d.metadata.get("source", "未知")
-        parts.append(f"[资料{i} | 来源:{source}]\n{d.page_content}")
-    return "\n\n".join(parts)
+    return "\n\n".join(f"[K{i} | {d.metadata.get('document_type', 'other')} | 来源:{d.metadata.get('source', '未知')}]\n{d.page_content}" for i, d in enumerate(docs, 1))
 
 
 def format_context_for_prompt(query: str, docs: list[Document]) -> str:
-    """生成可直接插入 Prompt 的资料块(无资料时返回空串)。"""
-    ctx = build_context_text(docs)
-    if not ctx:
+    context = build_context_text(docs)
+    if not context:
         return ""
-    return (
-        "以下是该候选人的个人资料(简历/项目/面经),请基于这些资料提问与评估,"
-        "确保问题贴合其真实经历,回答时引用其资料:\n\n"
-        f"{ctx}\n"
-    )
+    return f"以下为当前会话的候选人资料。必须基于资料时用 [K1] 形式标注引用，不得引用未提供内容：\n\n{context}\n"

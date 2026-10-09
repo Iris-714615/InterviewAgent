@@ -1,9 +1,16 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useKnowledgeStore } from '../stores/knowledge'
-import { listFiles, deleteFile } from '../api'
+import { useChatStore } from '../stores/chat'
 
 const kb = useKnowledgeStore()
+const chat = useChatStore()
+const documentType = ref('other')
+const redact = ref(true)
+const retentionDays = ref(30)
+const profileLoading = ref(false)
+const privacyLoading = ref(false)
+const sessionId = computed(() => chat.sessionId)
 const query = ref('')
 const dragOver = ref(false)
 
@@ -15,7 +22,7 @@ const deletingSource = ref('')
 async function loadFiles() {
   loadingFiles.value = true
   try {
-    files.value = await listFiles()
+    files.value = await kb.loadFiles(sessionId.value)
   } catch (e) {
     files.value = []
   } finally {
@@ -26,7 +33,7 @@ async function loadFiles() {
 async function onFileChange(e) {
   const files = e.target.files
   if (!files.length) return
-  await kb.upload(files[0])
+  await kb.upload(files[0], { documentType: documentType.value, sessionId: sessionId.value, retentionDays: retentionDays.value, redact: redact.value })
   e.target.value = ''
   // 上传后刷新文件列表
   if (kb.uploadResult) await loadFiles()
@@ -37,7 +44,7 @@ async function onDrop(e) {
   dragOver.value = false
   const file = e.dataTransfer.files[0]
   if (file) {
-    await kb.upload(file)
+    await kb.upload(file, { documentType: documentType.value, sessionId: sessionId.value, retentionDays: retentionDays.value, redact: redact.value })
     if (kb.uploadResult) await loadFiles()
   }
 }
@@ -47,17 +54,32 @@ async function onSearch() {
   await kb.search(query.value)
 }
 
-async function onDelete(source) {
-  if (!confirm(`确认删除「${source}」的所有片段?此操作不可恢复。`)) return
-  deletingSource.value = source
+async function onDelete(file) {
+  if (!confirm(`确认删除「${file.source}」的所有片段?此操作不可恢复。`)) return
+  deletingSource.value = file.document_id
   try {
-    await deleteFile(source)
+    await kb.remove(file.document_id)
     await loadFiles()
   } catch (e) {
     alert(`删除失败:${e.message}`)
   } finally {
     deletingSource.value = ''
   }
+}
+
+async function generateProfile() {
+  if (!sessionId.value) {
+    alert('请先在面试间创建会话，再生成岗位画像。')
+    return
+  }
+  profileLoading.value = true
+  try { await kb.generate(sessionId.value) } catch (e) { alert(`画像生成失败:${e.message}`) } finally { profileLoading.value = false }
+}
+
+async function clearData() {
+  if (!confirm('确认清空所有个人资料、会话与评估数据？此操作不可恢复。')) return
+  privacyLoading.value = true
+  try { await kb.clearAll(); files.value = []; chat.reset() } catch (e) { alert(`清空失败:${e.message}`) } finally { privacyLoading.value = false }
 }
 
 function fileIcon(name) {
@@ -94,6 +116,13 @@ onMounted(() => {
         <strong>点击或拖拽文件到此处上传</strong>
         <div class="text-soft text-sm mt-2">支持 PDF / Word / TXT / Markdown</div>
       </div>
+      <div class="upload-options">
+        <select v-model="documentType" class="select">
+          <option value="resume">简历</option><option value="candidate">候选人资料</option><option value="job_description">JD</option><option value="company">企业介绍</option><option value="other">其他</option>
+        </select>
+        <label class="text-soft text-sm"><input v-model="redact" type="checkbox" /> 自动脱敏</label>
+        <label class="text-soft text-sm">保留 <input v-model.number="retentionDays" class="days-input" type="number" min="1" max="3650" /> 天</label>
+      </div>
       <label class="btn btn-primary">
         选择文件
         <input type="file" accept=".pdf,.docx,.doc,.txt,.md" hidden @change="onFileChange" />
@@ -122,23 +151,41 @@ onMounted(() => {
       </div>
 
       <div v-if="files.length" class="file-list">
-        <div v-for="f in files" :key="f.source" class="file-item">
+        <div v-for="f in files" :key="f.document_id" class="file-item">
           <span class="file-icon">{{ fileIcon(f.source) }}</span>
           <span class="file-name" :title="f.source">{{ f.source }}</span>
+          <span class="tag">{{ ({ resume: '简历', job_description: 'JD', company: '企业介绍', other: '其他' }[f.document_type] || f.document_type) }}</span>
+          <span class="tag">ID {{ f.document_id }}</span>
           <span class="file-chunks tag">{{ f.chunks }} 片段</span>
           <button
             class="btn-del"
-            @click="onDelete(f.source)"
-            :disabled="deletingSource === f.source"
+            @click="onDelete(f)"
+            :disabled="deletingSource === f.document_id"
             title="删除"
           >
-            {{ deletingSource === f.source ? '…' : '✕' }}
+            {{ deletingSource === f.document_id ? '…' : '✕' }}
           </button>
         </div>
       </div>
       <div v-else-if="!loadingFiles" class="empty-hint text-soft text-sm">
         还没有上传文件,Agent 将无法基于个人资料提问
       </div>
+    </div>
+
+    <div class="card profile-section">
+      <div class="section-head"><div class="section-title">岗位与能力画像</div><button class="btn btn-primary btn-sm" @click="generateProfile" :disabled="profileLoading">{{ profileLoading ? '生成中…' : '生成画像' }}</button></div>
+      <div v-if="kb.profile" class="profile-grid">
+        <div><b>岗位匹配度</b><strong class="match-score">{{ kb.profile.match_score }}%</strong></div>
+        <div><b>候选人优势</b><p>{{ kb.profile.candidate_strengths?.join('、') || '暂无' }}</p></div>
+        <div><b>能力缺口</b><p>{{ kb.profile.requirement_gaps?.join('、') || '暂无' }}</p></div>
+        <div><b>重点考察</b><p>{{ kb.profile.focus_areas?.join('、') || '暂无' }}</p></div>
+        <div><b>问题计划</b><p>{{ kb.profile.interview_plan?.join('；') || '暂无' }}</p></div>
+      </div><div v-else class="text-soft text-sm">绑定会话后可生成岗位、候选人与企业画像。</div>
+    </div>
+    <div class="card privacy-card">
+      <div class="section-title">隐私与数据管理</div>
+      <p class="text-soft text-sm">资料仅用于面试检索、岗位画像与评估；默认自动脱敏，保留期结束后自动清理。当前状态：{{ redact ? '上传时自动脱敏' : '未脱敏' }}。配置模型后，相关片段和对话才会发送到模型网关。</p>
+      <button class="btn btn-ghost btn-sm" @click="clearData" :disabled="privacyLoading">{{ privacyLoading ? '清理中…' : '清空个人数据' }}</button>
     </div>
 
     <!-- 检索测试 -->
@@ -195,6 +242,15 @@ onMounted(() => {
   flex: 1;
   text-align: left;
 }
+.upload-options { display: grid; gap: 6px; min-width: 150px; }
+.days-input { width: 55px; padding: 3px 5px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.profile-grid > div { padding: 10px; background: var(--bg); border-radius: var(--radius-sm); }
+.profile-grid p { color: var(--text-soft); font-size: 13px; margin-top: 4px; }
+.match-score { display: block; font-size: 28px; color: var(--success); }
+.privacy-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.privacy-card .section-title { width: 100%; margin-bottom: 0; }
+.privacy-card p { flex: 1; min-width: 220px; }
 .upload-text strong {
   font-size: 15px;
 }
@@ -316,6 +372,8 @@ onMounted(() => {
   .upload-text {
     text-align: center;
   }
+  .upload-options { width: 100%; }
+  .profile-grid { grid-template-columns: 1fr; }
   .search-row {
     flex-direction: column;
   }

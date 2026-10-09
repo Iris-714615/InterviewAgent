@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     debug: bool = True
+    demo_mode: bool = False
 
     # ============ 数据库 ============
     database_url: str = "sqlite+aiosqlite:///./data/interview.db"
@@ -57,8 +58,19 @@ class Settings(BaseSettings):
     # ============ 向量库 ============
     chroma_persist_dir: str = "./data/chroma"
 
-    # ============ 上传 ============
+    # ============ 上传与隐私 ============
     upload_dir: str = "./data/uploads"
+    max_upload_mb: int = 20
+    default_retention_days: int = 30
+    pii_redaction_enabled: bool = True
+
+    # 每百万 token 估算成本（同一计价单位）
+    cost_flash_input_per_million: float = 0.2
+    cost_flash_output_per_million: float = 0.8
+    cost_pro_input_per_million: float = 1.0
+    cost_pro_output_per_million: float = 4.0
+    cost_glm_input_per_million: float = 2.0
+    cost_glm_output_per_million: float = 8.0
 
     # ============ CORS ============
     cors_origins: str = "http://localhost:5173,http://localhost:4173"

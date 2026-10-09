@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, onBeforeUnmount } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { synthesizeTTS, modelBadge } from '../api'
 
 const props = defineProps({
@@ -8,15 +9,14 @@ const props = defineProps({
   content: { type: String, default: '' },
   coach: { type: Boolean, default: false }, // 是否教练消息
   streaming: { type: Boolean, default: false },
-  model: { type: String, default: '' } // 本条回复使用的模型
+  model: { type: String, default: '' },
+  routeReason: { type: String, default: '' },
+  retrieval: { type: Array, default: () => [] }
 })
 
 marked.setOptions({ breaks: true })
 
-const html = computed(() => {
-  if (props.role === 'user') return props.content
-  return marked.parse(props.content || '')
-})
+const html = computed(() => DOMPurify.sanitize(marked.parse(props.content || '')))
 
 const isUser = computed(() => props.role === 'user')
 const label = computed(() => {
@@ -74,7 +74,19 @@ onBeforeUnmount(() => {
         <span v-if="badge" class="model-badge" :class="badge" :title="'使用模型:' + model">{{ badge }}</span>
         <span v-if="streaming" class="typing">·输入中</span>
       </div>
-      <div class="bubble" :class="{ md: !isUser }" v-html="html"></div>
+      <div v-if="isUser" class="bubble">{{ content }}</div>
+      <div v-else class="bubble md" v-html="html"></div>
+      <div v-if="!isUser && (retrieval.length || routeReason)" class="retrieval-panel">
+        <div class="retrieval-head">检索依据 <span v-if="routeReason" class="route-reason">{{ routeReason }}</span></div>
+        <div v-for="item in retrieval" :key="item.chunk_id || item.source" class="citation">
+          <span class="tag tag-primary">{{ item.source || '资料' }}</span>
+          <span v-if="item.document_type" class="tag">{{ item.document_type }}</span>
+          <span v-if="item.page" class="citation-meta">第 {{ item.page }} 页</span>
+          <span v-if="item.line" class="citation-meta">第 {{ item.line }} 行</span>
+          <span class="citation-meta">相关度 {{ Math.round((item.score || 0) * 100) }}%</span>
+          <div v-if="item.excerpt" class="citation-excerpt">{{ item.excerpt }}</div>
+        </div>
+      </div>
       <div v-if="canPlay" class="msg-actions">
         <button class="tts-btn" :disabled="ttsLoading" @click="toggleTTS">
           <span v-if="ttsLoading">合成中…</span>
@@ -184,6 +196,21 @@ onBeforeUnmount(() => {
   border-color: rgba(251, 191, 36, 0.35);
   box-shadow: 0 4px 16px rgba(251, 191, 36, 0.1);
 }
+.retrieval-panel {
+  margin-top: 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(99, 102, 241, .22);
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, .06);
+  font-size: 11px;
+}
+.retrieval-head { color: var(--primary-soft); font-weight: 600; margin-bottom: 6px; }
+.route-reason { color: var(--text-soft); font-weight: 400; margin-left: 8px; }
+.citation { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 5px; }
+.citation-reason { width: 100%; color: var(--text); font-size: 11px; }
+.citation .tag { padding: 1px 6px; font-size: 10px; }
+.citation-meta { color: var(--text-soft); }
+.citation-excerpt { width: 100%; color: var(--text-soft); line-height: 1.5; }
 .msg-actions {
   display: flex;
   align-items: center;

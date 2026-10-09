@@ -1,6 +1,8 @@
 """Agent 提示词模板 - 集中管理各角色的 System Prompt"""
 from __future__ import annotations
 
+import json
+
 from app.models.schemas import InterviewDirection, InterviewRole
 
 # ============ 方向描述 ============
@@ -43,8 +45,16 @@ def build_interviewer_prompt(
     direction: InterviewDirection,
     role: InterviewRole,
     context: str = "",
+    profile: dict | None = None,
 ) -> str:
     """构建面试官 System Prompt。"""
+    profile_context = ""
+    if profile:
+        profile_context = (
+            "\n【当前能力画像与追问策略】\n"
+            f"{json.dumps(profile, ensure_ascii=False)}\n"
+            "优先验证画像中的能力短板与证据不足处,结合优势逐步提高问题难度。\n"
+        )
     return (
         "你是一位资深面试官,正在对候选人进行一对一面试。\n\n"
         f"【面试方向】{DIRECTION_DESC[direction]}\n\n"
@@ -57,7 +67,7 @@ def build_interviewer_prompt(
         "5. 语气专业、自然,像真实面试官一样有压力感但不失礼貌。\n"
         "6. 开场先简短自我介绍并说明面试流程,再开始第一个问题。\n"
         "7. 候选人说「结束面试」时,给出简短总结。\n\n"
-        f"{context}"
+        f"{profile_context}{context}"
     )
 
 
@@ -89,10 +99,13 @@ EVALUATION_PROMPT = (
     "3. 给出总体评分(0-100,各维度加权)。\n"
     "4. 列出 3 条亮点(strengths)与 3 条短板(weaknesses)。\n"
     "5. 给出 3 条具体可执行的改进建议(suggestions)。\n"
-    "6. 写一段 100 字以内的总体评价(summary)。\n\n"
+    "6. 写一段 100 字以内的总体评价(summary)。\n"
+    "7. 每条判断必须引用对话中的 message_id；evidence 只允许引用候选人原话，quote 必须是对应消息内容的原文片段。\n"
+    "8. confidence 为 0-1；信息不足时降低 confidence 并写入 warnings。\n\n"
     "【输出格式】严格输出 JSON,字段如下:\n"
-    '{"overall_score": 数字, '
-    '"dimensions": [{"name":"维度名","score":数字,"comment":"评语"}, ...], '
+    '{"status":"completed","confidence":数字,"warnings":[],"overall_score":数字, '
+    '"dimensions": [{"name":"维度名","score":数字,"comment":"评语","evidence_ids":["消息ID"]}, ...], '
+    '"evidence":[{"message_id":"消息ID","quote":"原文片段","claim":"该证据支持的判断"}], '
     '"strengths": ["...", "...", "..."], '
     '"weaknesses": ["...", "...", "..."], '
     '"suggestions": ["...", "...", "..."], '
