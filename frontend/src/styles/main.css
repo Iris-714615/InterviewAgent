@@ -43,6 +43,29 @@
   --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.15);
 
   --nav-h: 64px;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #f4f7fb;
+  --bg-soft: #e9eef7;
+  --bg-card: rgba(255, 255, 255, 0.82);
+  --bg-hover: rgba(79, 70, 229, 0.08);
+  --bg-glass: rgba(255, 255, 255, 0.78);
+  --border: rgba(51, 65, 85, 0.12);
+  --border-strong: rgba(51, 65, 85, 0.22);
+  --text: #172033;
+  --text-soft: #526176;
+  --text-dim: #7b8799;
+  --primary: #4f46e5;
+  --primary-soft: #6366f1;
+  --primary-dim: #3730a3;
+  --primary-glow: rgba(79, 70, 229, 0.2);
+  --gradient-soft: linear-gradient(135deg, rgba(79, 70, 229, 0.12), rgba(139, 92, 246, 0.08));
+  --shadow: 0 8px 32px rgba(51, 65, 85, 0.12);
+  --shadow-soft: 0 2px 12px rgba(51, 65, 85, 0.1);
+  --shadow-card: 0 4px 24px rgba(51, 65, 85, 0.1), 0 1px 2px rgba(51, 65, 85, 0.08);
+  color-scheme: light;
 }
 
 * {
@@ -267,7 +290,36 @@ select {
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
 }
 
-.nav-item {
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-soft);
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--gradient-soft);
+}
+
+.topbar {
+  display: none;
+}
+
+.nav-item.active {
+  color: var(--text);
+}
+
+.nav-item { 
   display: flex;
   align-items: center;
   gap: 12px;
@@ -356,6 +408,24 @@ select {
 @media (max-width: 768px) {
   :root {
     font-size: 14px;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-glass);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  .topbar-label {
+    font-weight: 700;
+  }
+  .theme-toggle-mobile {
+    width: auto;
+    margin: 0;
+    padding: 7px 10px;
   }
   .sidebar {
     display: none;
