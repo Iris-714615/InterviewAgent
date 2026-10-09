@@ -1,5 +1,5 @@
-// 后端 API 封装 - 通过 vite proxy 转发到 http://127.0.0.1:8000
-const BASE = '/api/v1'
+// 后端 API 封装
+const BASE = `${(import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')}/api/v1`
 
 async function request(url, options = {}) {
   const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
