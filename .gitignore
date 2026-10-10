@@ -40,6 +40,7 @@ frontend/dist/
 .env.*.local
 
 # Runtime data
+/data/
 backend/data/uploads/*
 !backend/data/uploads/.gitkeep
 backend/data/chroma/
@@ -64,6 +65,7 @@ Thumbs.db
 logs/
 
 # Temporary files
+/.work/
 tmp/
 temp/
 *.tmp
