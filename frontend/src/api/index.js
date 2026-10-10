@@ -1,5 +1,8 @@
 // 后端 API 封装：前端与后端通过同域名的 Nginx /api/ 代理通信。
 const BASE = '/api/v1'
+const CHAT_BASE = import.meta.env.VITE_API_BASE_URL
+  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/api/v1`
+  : BASE
 
 async function request(url, options = {}) {
   const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
@@ -45,7 +48,7 @@ export function getServiceStatus() {
  */
 export async function chatStream(payload, { onChunk, onMeta, onProfile, onDone, onError } = {}) {
   try {
-    const res = await fetch(`${BASE}/chat/stream`, {
+    const res = await fetch(`${CHAT_BASE}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
