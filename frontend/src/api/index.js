@@ -1,8 +1,6 @@
 // 后端 API 封装：前端与后端通过同域名的 Nginx /api/ 代理通信。
 const BASE = '/api/v1'
-const CHAT_BASE = import.meta.env.VITE_API_BASE_URL
-  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/api/v1`
-  : BASE
+const CHAT_BASE = 'https://interviewagent-production-5cac.up.railway.app/api/v1'
 
 async function request(url, options = {}) {
   const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
