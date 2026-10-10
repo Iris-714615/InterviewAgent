@@ -2,7 +2,8 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { synthesizeTTS, modelBadge } from '../api'
+import { modelBadge } from '../api'
+import { speakText, stopSpeech } from '../utils/speech'
 
 const props = defineProps({
   role: { type: String, required: true }, // user | assistant
@@ -30,38 +31,36 @@ const badge = computed(() => modelBadge(props.model))
 const ttsLoading = ref(false)
 const ttsPlaying = ref(false)
 const ttsError = ref('')
-let audioEl = null
-let audioUrl = null
+let speechController = null
 
 const canPlay = computed(() => !isUser.value && props.content && !props.streaming)
 
 async function toggleTTS() {
-  // 正在播放则停止
-  if (ttsPlaying.value && audioEl) {
-    audioEl.pause()
+  if (ttsPlaying.value) {
+    speechController?.abort()
+    stopSpeech()
+    ttsPlaying.value = false
     return
   }
   if (ttsLoading.value) return
   ttsError.value = ''
   ttsLoading.value = true
   try {
-    if (audioUrl) URL.revokeObjectURL(audioUrl)
-    audioUrl = await synthesizeTTS(props.content)
-    audioEl = new Audio(audioUrl)
-    audioEl.onended = () => { ttsPlaying.value = false }
-    audioEl.onpause = () => { ttsPlaying.value = false }
-    await audioEl.play()
+    stopSpeech()
+    speechController = new AbortController()
     ttsPlaying.value = true
+    ttsLoading.value = false
+    await speakText(props.content, speechController.signal)
   } catch (e) {
-    ttsError.value = e.message || '合成失败'
+    ttsError.value = '朗读暂不可用，请阅读上方文字。'
   } finally {
     ttsLoading.value = false
+    ttsPlaying.value = false
   }
 }
 
 onBeforeUnmount(() => {
-  if (audioEl) { audioEl.pause(); audioEl = null }
-  if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null }
+  speechController?.abort()
 })
 </script>
 
@@ -89,7 +88,7 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="canPlay" class="msg-actions">
         <button class="tts-btn" :disabled="ttsLoading" @click="toggleTTS">
-          <span v-if="ttsLoading">合成中…</span>
+          <span v-if="ttsLoading">准备朗读…</span>
           <span v-else-if="ttsPlaying">⏸ 停止</span>
           <span v-else>🔊 朗读</span>
         </button>

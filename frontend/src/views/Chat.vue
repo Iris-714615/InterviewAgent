@@ -2,7 +2,8 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
-import { synthesizeTTS, recognizeASR } from '../api'
+import { recognizeASR } from '../api'
+import { speakText, stopSpeech } from '../utils/speech'
 import ChatMessage from '../components/ChatMessage.vue'
 
 const router = useRouter()
@@ -44,9 +45,9 @@ const profileDimensions = computed(() => Object.entries(chat.profile?.dimensions
   evidence: value?.evidence || ''
 })))
 const ragLabel = computed(() => ({
-  used: '已启用', empty: '无匹配', disabled: '已关闭', unconfigured: '未配置', error: '异常'
+  used: '已启用', empty: '无匹配', disabled: '已关闭', unconfigured: '未配置', error: '资料暂不可用', fallback: '资料暂不可用', keyword: '本地检索', pending: '检索中'
 }[chat.rag?.status] || '等待检索'))
-const modeLabel = computed(() => ({ normal: '正常', ok: '正常', degraded: '降级', demo: '演示' }[chat.runtimeMode] || chat.runtimeMode))
+const modeLabel = computed(() => ({ normal: '正常', ok: '正常', degraded: '基础练习', guided: '基础练习', demo: '演示' }[chat.runtimeMode] || chat.runtimeMode))
 const profileConfidence = computed(() => {
   const value = chat.profile?.confidence
   return typeof value === 'number' ? `${Math.round(value * 100)}%` : '暂无数值'
@@ -66,6 +67,7 @@ async function scrollToBottom() {
 }
 
 async function handleSend() {
+  stopAutoTTS()
   const msg = input.value.trim()
   if (!msg || chat.streaming) return
   input.value = ''
@@ -191,7 +193,7 @@ if (typeof window !== 'undefined') {
       } else if (e.error === 'service-not-allowed') {
         speechError.value = '语音识别服务不可用,请使用 Chrome/Edge 浏览器'
       } else {
-        speechError.value = `语音识别错误:${e.error}`
+        speechError.value = '语音输入暂不可用，仍可打字回答。'
       }
       // 5 秒后自动清除提示
       setTimeout(() => { speechError.value = '' }, 5000)
@@ -301,7 +303,7 @@ async function startListening() {
   try {
     await audioContext.audioWorklet.addModule(new URL('../worklets/recorder-processor.js', import.meta.url))
   } catch (e) {
-    asrError.value = `加载录音模块失败:${e.message}`
+    asrError.value = '录音暂不可用，仍可打字回答。'
     setTimeout(() => { asrError.value = '' }, 5000)
     stopDisplayStream()
     return
@@ -463,63 +465,61 @@ onBeforeUnmount(() => {
 
 // ============ 语音输出(自动朗读面试官回复) ============
 const autoTTS = ref(false)
-let autoTTSAudio = null
-let autoTTSUrl = null
+let autoSpeechController = null
+let spokenLength = 0
+let speakingMessageId = null
+let speechQueue = Promise.resolve()
 const ttsBusy = ref(false)
 
-async function playAutoTTS(text) {
-  if (!text || !autoTTS.value) return
-  // 停止上一段
-  if (autoTTSAudio) {
-    autoTTSAudio.pause()
-    autoTTSAudio = null
-  }
-  if (autoTTSUrl) {
-    URL.revokeObjectURL(autoTTSUrl)
-    autoTTSUrl = null
-  }
-  ttsBusy.value = true
-  try {
-    autoTTSUrl = await synthesizeTTS(text)
-    autoTTSAudio = new Audio(autoTTSUrl)
-    await autoTTSAudio.play()
-  } catch (e) {
-    console.warn('自动朗读失败:', e.message)
-  } finally {
-    ttsBusy.value = false
-  }
-}
-
 function stopAutoTTS() {
-  if (autoTTSAudio) {
-    autoTTSAudio.pause()
-    autoTTSAudio = null
-  }
-  if (autoTTSUrl) {
-    URL.revokeObjectURL(autoTTSUrl)
-    autoTTSUrl = null
-  }
+  autoSpeechController?.abort()
+  autoSpeechController = null
+  stopSpeech()
+  spokenLength = 0
+  speakingMessageId = null
+  speechQueue = Promise.resolve()
+  ttsBusy.value = false
 }
 
-// 监听流式结束 → 自动朗读最后一条面试官消息
-watch(
-  () => chat.streaming,
-  (streaming, prev) => {
-    if (prev && !streaming) {
-      // 流式刚结束,找最后一条面试官消息
-      const last = chat.messages[chat.messages.length - 1]
-      if (last && last.role === 'assistant' && last.channel === 'interview' && last.content) {
-        playAutoTTS(last.content)
-      }
-    }
-  }
-)
+function queueSpeech(text) {
+  if (!text.trim()) return
+  const controller = autoSpeechController
+  ttsBusy.value = true
+  speechQueue = speechQueue.then(async () => {
+    if (controller?.signal.aborted) return
+    try { await speakText(text, controller.signal) }
+    catch (e) { /* Text remains available in the conversation. */ }
+  }).finally(() => { if (controller === autoSpeechController) ttsBusy.value = false })
+}
 
-// 关闭自动朗读时立即停止
-watch(autoTTS, (on) => {
-  if (!on) stopAutoTTS()
+// Start reading a completed sentence while the answer is still streaming.
+watch(() => chat.messages.at(-1)?.content || '', (content) => {
+  const last = chat.messages.at(-1)
+  if (!autoTTS.value || !last || last.role !== 'assistant' || last.channel !== 'interview') return
+  if (speakingMessageId !== last.message_id) {
+    stopAutoTTS()
+    speakingMessageId = last.message_id
+    autoSpeechController = new AbortController()
+  }
+  const remaining = content.slice(spokenLength)
+  const complete = remaining.match(/^[\s\S]*?[。！？!?\n]/)
+  if (complete) {
+    spokenLength += complete[0].length
+    queueSpeech(complete[0])
+  }
 })
 
+watch(() => chat.streaming, (streaming, prev) => {
+  if (prev && !streaming && autoTTS.value) {
+    const last = chat.messages.at(-1)
+    if (last?.role === 'assistant' && last.channel === 'interview') {
+      if (!autoSpeechController) autoSpeechController = new AbortController()
+      queueSpeech(last.content.slice(spokenLength))
+      spokenLength = last.content.length
+    }
+  }
+})
+watch(autoTTS, (on) => { if (!on) stopAutoTTS() })
 // 监听消息变化自动滚动
 watch(
   () => chat.messages.length,
@@ -774,7 +774,7 @@ watch(
 }
 .mode-normal, .mode-ok, .rag-used { color: var(--success); border-color: rgba(52, 211, 153, .35); }
 .mode-degraded, .rag-empty, .rag-unconfigured { color: var(--warning); border-color: rgba(245, 158, 11, .35); }
-.mode-demo, .rag-error { color: var(--danger); border-color: rgba(239, 68, 68, .35); }
+.mode-demo { color: var(--danger); border-color: rgba(239, 68, 68, .35); }
 .source-text { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .status-error { color: var(--danger); }
 .profile-card { margin-bottom: 12px; padding: 14px 18px; }

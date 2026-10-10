@@ -6,15 +6,11 @@ import { createSession, chatStream, evaluate, getSessionMessages, getServiceStat
 // 刷新后通过 getSessionMessages 从后端恢复完整对话,彻底解决刷新丢失问题。
 const STORAGE_KEY = 'interview_agent_current_session'
 
-function saveToLocal({ sessionId, direction, role, coachMode }) {
+function saveToLocal({ sessionId, direction, role, coachMode, messages }) {
   try {
-    if (!sessionId) {
-      localStorage.removeItem(STORAGE_KEY)
-      return
-    }
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ sessionId, direction, role, coachMode })
+      JSON.stringify({ sessionId, direction, role, coachMode, messages: (messages ?? loadFromLocal()?.messages ?? []).slice(-40) })
     )
   } catch (e) {
     // localStorage 不可用(隐私模式等),静默降级
@@ -53,7 +49,8 @@ function normalizeMessage(message) {
     model: message.model || '',
     route_reason: message.route_reason || '',
     retrieval: message.retrieval || [],
-    demo: Boolean(message.demo)
+    demo: Boolean(message.demo),
+    fallback: Boolean(message.fallback)
   }
 }
 
@@ -98,14 +95,14 @@ export const useChatStore = defineStore('chat', {
         this.serviceStatusError = ''
       } catch (err) {
         this.serviceStatus = null
-        this.serviceStatusError = err.message || '服务状态获取失败'
+        this.serviceStatusError = '当前可以继续基础练习'
       }
       return this.serviceStatus
     },
     async startSession() {
       const data = await createSession(this.direction, this.role)
       this.sessionId = data.session_id
-      this.messages = []
+      if (!this.messages.length) this.messages = []
       this.evaluation = null
       this.streamMeta = {}
       this.rag = null
@@ -122,7 +119,10 @@ export const useChatStore = defineStore('chat', {
     },
     async send(message) {
       if (this.streaming) return
-      if (!this.sessionId) await this.startSession()
+      if (!this.sessionId) {
+        try { await this.startSession() } catch { this.runtimeMode = 'guided' }
+      }
+      const previous = this.messages.map((m) => ({ role: m.role, content: m.content, channel: m.channel }))
 
       const channel = this.coachMode ? 'coach' : 'interview'
       this.messages.push(normalizeMessage({ message_id: newMessageId(), role: 'user', content: message, channel }))
@@ -136,7 +136,8 @@ export const useChatStore = defineStore('chat', {
         direction: this.direction,
         role: this.role,
         use_rag: true,
-        coach_mode: this.coachMode
+        coach_mode: this.coachMode,
+        history: previous
       }
 
       await chatStream(payload, {
@@ -146,6 +147,8 @@ export const useChatStore = defineStore('chat', {
           this.rag = meta.rag || null
           this.runtimeMode = meta.mode || (this.serviceStatus?.demo_mode ? 'demo' : this.serviceStatus?.status || 'normal')
           this.messages[idx].model = meta.model || ''
+          if (meta.user_message_id) this.messages[idx - 1].message_id = meta.user_message_id
+          if (meta.message_id) this.messages[idx].message_id = meta.message_id
           this.messages[idx].route_reason = meta.route_reason || ''
           this.messages[idx].retrieval = meta.retrieval || []
         },
@@ -155,39 +158,32 @@ export const useChatStore = defineStore('chat', {
         onChunk: (chunk, data) => {
           this.messages[idx].content += chunk
           if (data.demo) this.messages[idx].demo = true
+          if (data.fallback) this.messages[idx].fallback = true
         },
-        onDone: async (data) => {
-          this.demoMode = Boolean(data && data.demo)
-          if (this.demoMode) {
-            this.runtimeMode = 'demo'
-            this.messages[idx].demo = true
-          }
-          try {
-            const serverMessages = await getSessionMessages(this.sessionId)
-            this.messages = serverMessages.map(normalizeMessage)
-          } catch (e) {
-            // 对话已成功，消息 ID 同步失败时保留当前显示内容
+        onDone: (data) => {
+          this.demoMode = Boolean(data?.demo)
+          if (data?.fallback) {
+            this.runtimeMode = 'guided'
+            this.messages[idx].fallback = true
           }
           this.streaming = false
-          // 流式完成后持久化最新会话信息
-          saveToLocal({
-            sessionId: this.sessionId,
-            direction: this.direction,
-            role: this.role,
-            coachMode: this.coachMode
-          })
+          saveToLocal({ sessionId: this.sessionId, direction: this.direction,
+            role: this.role, coachMode: this.coachMode, messages: this.messages })
         },
-        onError: (err) => {
-          // 区分错误类型,给出更友好的提示
-          const msg = err.message || ''
-          if (msg.includes('Failed to fetch') || msg.includes('ERR_ABORTED')) {
-            this.messages[idx].content = '⚠️ 连接失败:后端服务未启动或网络中断,请稍后重试'
-          } else if (msg.includes('对话失败 5')) {
-            this.messages[idx].content = `⚠️ 服务端错误:${msg}`
-          } else {
-            this.messages[idx].content = `⚠️ 出错了:${msg}`
-          }
+        onError: () => {
+          const content = this.messages[idx].content
+          this.messages[idx].content = content
+            ? `${content}\n\n本轮回复中断。你可以继续补充回答或发送“继续”。`
+            : this.coachMode
+              ? '已切换到基础辅导。你可以按背景、任务、行动、结果整理回答，再说明自己的贡献。'
+              : '已切换到基础练习。请介绍一个项目的目标、你的职责、技术方案和结果。'
+          this.messages[idx].fallback = true
+          this.messages[idx].model = ''
+          this.messages[idx].route_reason = '基础练习引导'
+          this.runtimeMode = 'guided'
           this.streaming = false
+          saveToLocal({ sessionId: this.sessionId, direction: this.direction,
+            role: this.role, coachMode: this.coachMode, messages: this.messages })
         }
       })
     },
@@ -220,7 +216,7 @@ export const useChatStore = defineStore('chat', {
     // 返回 true 表示已恢复,false 表示无历史可恢复。
     async restoreFromLocal() {
       const saved = loadFromLocal()
-      if (!saved || !saved.sessionId) return false
+      if (!saved) return false
       try {
         const msgs = await getSessionMessages(saved.sessionId)
         // 后端会话已被删除/不存在 → 清理本地记录
@@ -243,9 +239,13 @@ export const useChatStore = defineStore('chat', {
         this.restored = true
         return this.messages.length > 0
       } catch (e) {
-        // 会话不存在或后端未启动,清理本地记录
-        clearLocal()
-        return false
+        this.sessionId = saved.sessionId || null
+        this.direction = saved.direction || this.direction
+        this.role = saved.role || this.role
+        this.messages = (saved.messages || []).map(normalizeMessage)
+        this.runtimeMode = 'guided'
+        this.restored = this.messages.length > 0
+        return this.restored
       }
     },
     async runEvaluation() {
@@ -265,6 +265,14 @@ export const useChatStore = defineStore('chat', {
         })
         this.evaluation = result
         return result
+      } catch (e) {
+        this.evaluation = {
+          status: 'failed', confidence: 0, overall_score: 0,
+          dimensions: [], evidence: [], strengths: [], weaknesses: [],
+          suggestions: [], warnings: [],
+          summary: '这次反馈暂时无法生成。你的回答仍保留，可以稍后重试。'
+        }
+        return this.evaluation
       } finally {
         this.evaluating = false
       }

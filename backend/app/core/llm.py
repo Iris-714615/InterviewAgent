@@ -55,7 +55,7 @@ class ModelRouter:
 
 class LLMService:
     def __init__(self) -> None:
-        self.client = AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url)
+        self.client = AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url, timeout=settings.llm_timeout_seconds, max_retries=0)
 
     @staticmethod
     def _estimate(text: str) -> int:
@@ -122,7 +122,7 @@ class LLMService:
                           message_id: str | None = None) -> AsyncIterator[str]:
         selected, started, output, usage = model or settings.model_pro, time.perf_counter(), [], None
         try:
-            stream = await self.client.chat.completions.create(model=selected, messages=messages, temperature=temperature, stream=True,
+            stream = await self.client.chat.completions.create(model=selected, messages=messages, temperature=temperature, stream=True, max_tokens=settings.chat_max_tokens,
                                                                stream_options={"include_usage": True})
             async for chunk in stream:
                 if getattr(chunk, "usage", None): usage = chunk.usage

@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import base64
+import asyncio
+from collections import OrderedDict
 
 from openai import AsyncOpenAI
 
@@ -32,7 +34,11 @@ class TTSService:
         self.client = AsyncOpenAI(
             api_key=settings.api_key,
             base_url=settings.base_url,
+            timeout=settings.tts_timeout_seconds,
+            max_retries=0,
         )
+
+        self._cache = OrderedDict()
 
     async def synthesize(self, text: str) -> bytes:
         """将文本转为语音,返回 wav 音频字节。
@@ -45,7 +51,10 @@ class TTSService:
         if not clean:
             return b""
 
-        completion = await self.client.chat.completions.create(
+        if clean in self._cache:
+            self._cache.move_to_end(clean)
+            return self._cache[clean]
+        completion = await asyncio.wait_for(self.client.chat.completions.create(
             model=settings.tts_model,
             messages=[
                 {"role": "user", "content": _STYLE_PROMPT},
@@ -55,7 +64,7 @@ class TTSService:
                 "format": "wav",
                 "voice": settings.tts_voice,
             },
-        )
+        ), timeout=settings.tts_timeout_seconds)
 
         message = completion.choices[0].message
         audio_obj = getattr(message, "audio", None)
@@ -68,7 +77,12 @@ class TTSService:
             data = getattr(audio_obj, "data", "") or ""
         if not data:
             return b""
-        return base64.b64decode(data)
+        result = base64.b64decode(data)
+        if len(result) <= 2_000_000:
+            self._cache[clean] = result
+            while len(self._cache) > 8:
+                self._cache.popitem(last=False)
+        return result
 
 
 tts_service = TTSService()

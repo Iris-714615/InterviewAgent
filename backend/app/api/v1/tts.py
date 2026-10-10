@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 
 from app.core.tts import tts_service
@@ -21,11 +21,11 @@ async def text_to_speech(req: TTSRequest):
         raise HTTPException(status_code=400, detail="文本不能为空")
     try:
         audio = await tts_service.synthesize(req.text)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"语音合成失败:{e}")
+    except Exception:
+        return Response(status_code=204, headers={"X-Speech-Fallback": "browser"})
 
     if not audio:
-        raise HTTPException(status_code=500, detail="未生成音频")
+        return Response(status_code=204, headers={"X-Speech-Fallback": "browser"})
 
     return StreamingResponse(
         iter([audio]),

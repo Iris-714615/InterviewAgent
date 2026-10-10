@@ -272,3 +272,10 @@ cd ../backend && uvicorn app.main:app --host 0.0.0.0 --port 8000
 <p align="center">
   Made with ❤️ by <a href="https://github.com/Iris-714615">Iris-714615</a>
 </p>
+
+
+## 服务降级与 Railway 配置
+
+资料库默认使用按会话隔离的本地关键词检索，不依赖嵌入接口，因此外部嵌入服务不可用时仍可上传和检索资料。若部署环境已配置兼容的嵌入模型，可设置 `RAG_VECTOR_ENABLED=true`，并按需指定 `EMBEDDING_API_KEY`、`EMBEDDING_BASE_URL`。向量调用超时或失败会回退到关键词检索；页面显示“本地检索”以区分检索方式。
+
+聊天在检索、模型首字和整轮回复上设有超时。外部模型不可用时，系统给出明确标注的基础练习问题，不会把预设问题或固定分数伪装成模型结果。浏览器优先使用本机语音朗读；不支持浏览器语音时才尝试云端语音，云端有短超时。建议为 Railway 后端的 `/app/data` 挂载持久化卷，以保留 SQLite 会话、上传资料和检索索引。

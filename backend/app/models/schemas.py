@@ -95,7 +95,7 @@ class KnowledgeDoc(BaseModel):
 
 
 class RetrievalStatus(BaseModel):
-    status: Literal["used", "empty", "disabled", "unconfigured", "error"]
+    status: Literal["used", "keyword", "fallback", "pending", "empty", "disabled", "unconfigured", "error"]
     count: int = 0
     sources: list[str] = Field(default_factory=list)
     docs: list[KnowledgeDoc] = Field(default_factory=list)

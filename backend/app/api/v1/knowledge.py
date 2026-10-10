@@ -1,5 +1,6 @@
 """会话级资料库、岗位画像与隐私管理接口。"""
 from __future__ import annotations
+import asyncio
 import logging
 import re
 import uuid
@@ -12,7 +13,7 @@ from app.core.config import settings
 from app.core.llm import ModelRouter, llm_service
 from app.models.schemas import DeleteResponse, JobMatchProfile, KnowledgeBaseRequest, KnowledgeDoc, KnowledgeResponse, UploadResponse
 from app.rag.loader import load_file, split_documents
-from app.rag.retriever import citations_from_docs, retrieve_context
+from app.rag.retriever import citations_from_docs, retrieve_context, retrieve_context_async
 from app.rag.vectorstore import vector_store
 from app.services.session_store import session_store
 
@@ -78,10 +79,10 @@ async def upload_file(file: UploadFile = File(...), session_id: str | None = For
                       document_type: str = Form("other"), retention_days: int = Form(settings.default_retention_days), redact: bool = Form(True)):
     if session_id and not session_store.exists(session_id):
         raise HTTPException(404, "会话不存在")
-    if document_type not in DOCUMENT_TYPES:
-        raise HTTPException(422, "不支持的文档类型")
     if document_type == "candidate":
         document_type = "resume"
+    if document_type not in DOCUMENT_TYPES:
+        raise HTTPException(422, "不支持的文档类型")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(415, "仅支持 PDF、DOCX、TXT、MD")
@@ -108,7 +109,7 @@ async def upload_file(file: UploadFile = File(...), session_id: str | None = For
         for index, chunk in enumerate(chunks):
             chunk.metadata["chunk_id"] = f"{document_id}:{index}"
         if chunks:
-            vector_store.add_documents(chunks)
+            await asyncio.to_thread(vector_store.add_documents, chunks)
         if stored_name:
             temporary.replace(settings.upload_path / stored_name)
         else:
@@ -158,8 +159,14 @@ async def delete_file_legacy(source: str):
 @router.post("/retrieve", response_model=KnowledgeResponse)
 async def retrieve(req: KnowledgeBaseRequest, session_id: str = Query(...), document_type: str | None = None):
     if not session_store.exists(session_id): raise HTTPException(404, "会话不存在")
-    docs, retrieval = retrieve_context(req.query, session_id, req.top_k, document_types=[document_type] if document_type else None)
-    return KnowledgeResponse(docs=[KnowledgeDoc(content=d.page_content, source=d.metadata.get("source", "未知"), score=float(d.metadata.get("score", 0))) for d in docs], retrieval=retrieval)
+    docs, retrieval = await retrieve_context_async(req.query, session_id, req.top_k, document_types=[document_type] if document_type else None)
+    items = [KnowledgeDoc(content=d.page_content, source=d.metadata.get("source", "未知"),
+        score=float(d.metadata.get("score", 0)), chunk_id=str(d.metadata.get("chunk_id", "")),
+        document_id=str(d.metadata.get("document_id", "")), document_type=d.metadata.get("document_type", "other"),
+        page=d.metadata.get("page"), line=d.metadata.get("line"), excerpt=d.page_content[:240]) for d in docs]
+    retrieval["docs"] = items
+    retrieval["citations"] = citations_from_docs(docs)
+    return KnowledgeResponse(docs=items, retrieval=retrieval)
 
 
 @router.post("/profile", response_model=JobMatchProfile)

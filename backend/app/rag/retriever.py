@@ -1,5 +1,7 @@
 """强制按会话隔离的 RAG 检索与引用格式化。"""
 from __future__ import annotations
+import asyncio
+import logging
 from langchain_core.documents import Document
 from app.core.config import settings
 from app.models.schemas import RetrievalEvidence
@@ -18,16 +20,15 @@ def retrieve_context(query: str, session_id: str | None = None, top_k: int = 4, 
         return [], retrieval_meta("disabled")
     if not session_id:
         return [], retrieval_meta("empty")
-    if not settings.api_key or settings.api_key.startswith("sk-your"):
-        return [], retrieval_meta("unconfigured")
     try:
         docs = vector_store.search(query, session_id=session_id, top_k=top_k, document_types=document_types,
                                    document_ids=session_store.get_bindings(session_id))
-        meta = retrieval_meta("used" if docs else "empty", docs)
+        meta = retrieval_meta(("keyword" if any(d.metadata.get("retrieval_method") == "keyword" for d in docs) else "used") if docs else "empty", docs)
         meta["evidence"] = [c.model_dump(mode="json") for c in citations_from_docs(docs)]
         return docs, meta
-    except Exception:
-        return [], retrieval_meta("error")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Retrieval unavailable (%s)", type(exc).__name__)
+        return [], retrieval_meta("fallback")
 
 
 def citations_from_docs(docs: list[Document]) -> list[RetrievalEvidence]:
@@ -50,3 +51,10 @@ def format_context_for_prompt(query: str, docs: list[Document]) -> str:
     if not context:
         return ""
     return f"以下为当前会话的候选人资料。必须基于资料时用 [K1] 形式标注引用，不得引用未提供内容：\n\n{context}\n"
+
+
+async def retrieve_context_async(*args, **kwargs):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(retrieve_context, *args, **kwargs), settings.rag_timeout_seconds)
+    except Exception:
+        return [], retrieval_meta("fallback")

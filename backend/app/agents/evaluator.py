@@ -33,6 +33,8 @@ class EvaluatorAgent:
         key_configured = bool(settings.api_key) and not settings.api_key.startswith("sk-your")
         if settings.demo_mode and not key_configured:
             return self._demo(interview_messages)
+        if not key_configured:
+            return self._failed("反馈暂时无法生成，你的回答已保留，可以稍后重试。")
         transcript = self._build_transcript(interview_messages)
         prompt = (
             f"【面试方向】{direction.value}\n"
@@ -50,7 +52,7 @@ class EvaluatorAgent:
         except Exception:
             if settings.demo_mode:
                 return self._demo(interview_messages)
-            return self._failed("评估模型调用失败,请重试")
+            return self._failed("反馈暂时无法生成，你的回答已保留，可以稍后重试。")
         return self._validate(result, interview_messages)
 
     @staticmethod
@@ -78,11 +80,11 @@ class EvaluatorAgent:
                 raise ValueError("invalid dimension evidence")
             return result
         except (ValidationError, TypeError, ValueError):
-            return cls._failed("评估结果解析或证据校验失败,请重试")
+            return cls._failed("反馈暂时无法生成，你的回答已保留，可以稍后重试。")
 
     @staticmethod
     def _failed(warning: str) -> EvaluationResponse:
-        return EvaluationResponse(status="failed", confidence=0, warnings=[warning], summary="评估失败")
+        return EvaluationResponse(status="failed", confidence=0, warnings=[warning], summary="你的面试回答已保留；反馈暂时无法生成，请稍后重新尝试。")
 
     @staticmethod
     def _demo(messages: list[ChatMessage]) -> EvaluationResponse:

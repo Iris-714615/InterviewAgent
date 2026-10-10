@@ -19,7 +19,7 @@ onMounted(async () => {
     try { growth.value = await getGrowthSummary(chat.sessionId) } catch (e) { growth.value = null } finally { growthLoading.value = false }
   }
 })
-const statusLabel = computed(() => ({ completed: '正式评估', failed: '评估失败', demo: '演示报告' }[ev.value?.status] || ev.value?.status || '未知状态'))
+const statusLabel = computed(() => ({ completed: '正式评估', failed: '反馈待重试', demo: '演示报告' }[ev.value?.status] || ev.value?.status || '未知状态'))
 const evidenceMessages = computed(() => Object.fromEntries(
   chat.interviewMessages.filter((m) => m.role === 'user').map((m) => [m.message_id, m.content])
 ))
@@ -157,14 +157,14 @@ function exportReport() {
       <div class="card report-status" :class="`status-${ev.status}`">
         <div><strong>{{ statusLabel }}</strong> · 置信度 {{ Math.round((ev.confidence || 0) * 100) }}%</div>
         <div v-if="ev.status !== 'completed'" class="status-note">
-          {{ ev.status === 'demo' ? '演示结果不计入正式成绩，也不会保存。' : '本次评估未通过解析或证据校验，不计入正式成绩。' }}
+          {{ ev.status === 'demo' ? '演示结果不计入正式成绩，也不会保存。' : '反馈暂时无法生成，你的对话已保留，可以稍后重试。' }}
         </div>
-        <ul v-if="ev.warnings?.length" class="warning-list">
+        <ul v-if="ev.warnings?.length && ev.status !== 'failed'" class="warning-list">
           <li v-for="(warning, i) in ev.warnings" :key="i">{{ warning }}</li>
         </ul>
       </div>
       <!-- 总分 -->
-      <div class="card score-card">
+      <div v-if="ev.status !== 'failed'" class="card score-card">
         <div class="score-left">
           <div class="score-label">综合评分</div>
           <div class="score-num" :style="{ color: scoreColor }">{{ ev.overall_score.toFixed(0) }}</div>
@@ -182,8 +182,13 @@ function exportReport() {
         </div>
       </div>
 
+      <div v-if="ev.status === 'failed'" class="card empty">
+        <div class="empty-title">回答已保留</div>
+        <div class="empty-desc text-soft">反馈暂时无法生成，你可以继续练习，稍后再试。</div>
+        <button class="btn btn-primary mt-4" @click="chat.runEvaluation()">重新生成反馈</button>
+      </div>
       <!-- 维度详情 -->
-      <div class="card">
+      <div v-if="ev.status !== 'failed'" class="card">
         <div class="section-title">维度详情</div>
         <div class="dim-list">
           <div v-for="d in ev.dimensions" :key="d.name" class="dim-item">
@@ -209,7 +214,7 @@ function exportReport() {
       </div>
 
       <!-- 亮点 / 短板 / 建议 -->
-      <div class="grid-3">
+      <div v-if="ev.status !== 'failed'" class="grid-3">
         <div class="card col">
           <div class="section-title" style="color: var(--success)">✨ 亮点</div>
           <ul class="point-list">
@@ -262,7 +267,7 @@ function exportReport() {
         <div class="actions mt-4">
           <button class="btn btn-primary" @click="router.push('/chat')">再来一场</button>
           <button class="btn btn-ghost" @click="router.push('/knowledge')">补充资料</button>
-          <button class="btn btn-ghost" @click="exportReport">⬇ 导出报告</button>
+          <button v-if="ev.status !== 'failed'" class="btn btn-ghost" @click="exportReport">⬇ 导出报告</button>
         </div>
       </div>
     </template>

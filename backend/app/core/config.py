@@ -25,6 +25,18 @@ class Settings(BaseSettings):
 
     # ============ Embedding 向量模型 ============
     embedding_model: str = "qwen-text-embedding-v4"
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_timeout_seconds: float = 3.0
+    rag_timeout_seconds: float = 4.0
+    rag_vector_enabled: bool = False
+    llm_timeout_seconds: float = 15.0
+    chat_first_token_seconds: float = 12.0
+    chat_idle_seconds: float = 10.0
+    chat_total_seconds: float = 45.0
+    chat_max_tokens: int = 600
+    live_profile_enabled: bool = False
+    tts_timeout_seconds: float = 6.0
 
     # ============ TTS 语音模型 ============
     # mimo-v2.5-tts 预置音色(中文男声):冰糖/茉莉(女) 苏打/白桦(男)

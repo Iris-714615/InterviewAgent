@@ -3,16 +3,15 @@ const BASE = '/api/v1'
 const CHAT_BASE = BASE
 
 async function request(url, options = {}) {
-  const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
-  const res = await fetch(url, { headers, ...options })
-  if (!res.ok) {
-    let message = '服务暂时不可用，请稍后重试'
-    try {
-      const data = await res.json()
-      if (data?.detail && typeof data.detail === 'string') message = data.detail
-    } catch (e) {}
-    throw new Error(`请求失败 ${res.status}: ${message}`)
+  const { timeoutMs = 20000, ...fetchOptions } = options
+  const headers = fetchOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
+  let res
+  try {
+    res = await fetch(url, { headers, ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) })
+  } catch (e) {
+    throw new Error('服务连接较慢，请稍后重试。已输入的内容仍在当前页面。')
   }
+  if (!res.ok) throw new Error('暂时无法完成此操作，请稍后重试。')
   return res.json()
 }
 
@@ -45,65 +44,56 @@ export function getServiceStatus() {
  * @param {(err: Error) => void} handlers.onError - 错误
  */
 export async function chatStream(payload, { onChunk, onMeta, onProfile, onDone, onError } = {}) {
+  const controller = new AbortController()
+  const deadline = setTimeout(() => controller.abort(), 65000)
+  let idle = null
+  const resetIdle = () => {
+    clearTimeout(idle)
+    idle = setTimeout(() => controller.abort(), 22000)
+  }
   try {
+    resetIdle()
     const res = await fetch(`${CHAT_BASE}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     })
-    if (!res.ok) throw new Error(`对话失败 ${res.status}`)
-
+    if (!res.ok || !res.body) throw new Error('对话服务暂时不可用')
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     let finished = false
-
-    while (true) {
+    while (!finished) {
       const { done, value } = await reader.read()
       if (done) break
+      resetIdle()
       buffer += decoder.decode(value, { stream: true })
-
-      // SSE 事件以空行分隔,兼容 \r\n 和 \n 两种行尾
       const blocks = buffer.split(/\r?\n\r?\n/)
-      buffer = blocks.pop() // 最后不完整的块留到下次
-
+      buffer = blocks.pop()
       for (const block of blocks) {
-        const lines = block.split(/\r?\n/)
         let event = 'message'
         let data = ''
-        for (const line of lines) {
+        for (const line of block.split(/\r?\n/)) {
           if (line.startsWith('event:')) event = line.slice(6).trim()
           else if (line.startsWith('data:')) data += line.slice(5).trim()
         }
         if (!data) continue
-        try {
-          const parsed = JSON.parse(data)
-          if (event === 'error') {
-            onError && onError(new Error(parsed.content || '未知错误'))
-            return
-          }
-          if (event === 'done') {
-            finished = true
-            if (onDone) await onDone(parsed)
-            return
-          }
-          if (event === 'meta') {
-            onMeta && onMeta(parsed)
-            continue
-          }
-          if (event === 'profile') {
-            onProfile && onProfile(parsed)
-            continue
-          }
-          if (parsed.content) onChunk && onChunk(parsed.content, parsed)
-        } catch (e) {
-          // 非 JSON,跳过
-        }
+        let parsed
+        try { parsed = JSON.parse(data) } catch { continue }
+        if (event === 'error') throw new Error(parsed.message || '对话暂时中断')
+        if (event === 'meta') onMeta?.(parsed)
+        else if (event === 'profile') onProfile?.(parsed)
+        else if (event === 'done') { finished = true; await onDone?.(parsed); break }
+        else if (parsed.content) onChunk?.(parsed.content, parsed)
       }
     }
-    if (!finished) onDone && onDone({ finish: true })
+    if (!finished) throw new Error('对话连接中断')
   } catch (err) {
-    onError && onError(err)
+    onError?.(err)
+  } finally {
+    clearTimeout(deadline)
+    clearTimeout(idle)
   }
 }
 
@@ -117,12 +107,10 @@ export async function synthesizeTTS(text) {
   const res = await fetch(`${BASE}/tts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
+    body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(8000)
   })
-  if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    throw new Error(`语音合成失败 ${res.status}: ${t}`)
-  }
+  if (!res.ok || res.status === 204) throw new Error('语音暂不可用')
   const blob = await res.blob()
   return URL.createObjectURL(blob)
 }
@@ -163,6 +151,7 @@ export function modelBadge(model) {
 // ============ 评估 ============
 export function evaluate(payload) {
   return request(`${BASE}/evaluation`, {
+    timeoutMs: 60000,
     method: 'POST',
     body: JSON.stringify(payload)
   })
@@ -180,7 +169,7 @@ export function uploadFile(file, { documentType = 'other', sessionId = null, ret
   formData.append('retention_days', String(retentionDays))
   formData.append('redact', String(redact))
   if (sessionId) formData.append('session_id', sessionId)
-  return request(`${BASE}/knowledge/upload`, { method: 'POST', body: formData })
+  return request(`${BASE}/knowledge/upload`, { method: 'POST', body: formData, timeoutMs: 45000 })
 }
 
 export function listFiles(sessionId = null) {
