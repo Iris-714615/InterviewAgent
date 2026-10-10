@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     rag_timeout_seconds: float = 4.0
     rag_vector_enabled: bool = False
     llm_timeout_seconds: float = 15.0
-    chat_first_token_seconds: float = 12.0
+    chat_first_token_seconds: float = 8.0
+    interactive_fast_model: bool = True
     chat_idle_seconds: float = 10.0
     chat_total_seconds: float = 45.0
     chat_max_tokens: int = 600

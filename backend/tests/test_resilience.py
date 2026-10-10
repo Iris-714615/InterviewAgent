@@ -70,3 +70,45 @@ def test_tts_falls_back_without_leaking_provider_error(monkeypatch):
     assert response.status_code == 204
     assert response.headers['x-speech-fallback'] == 'browser'
     assert 'provider_secret_exception' not in response.text
+
+
+def test_interactive_chat_prefers_fast_model(monkeypatch):
+    from app.core.llm import ModelRouter
+
+    monkeypatch.setattr(settings, 'interactive_fast_model', True)
+    decision = ModelRouter.decide('interviewer', '请解释你项目里的 RAG 设计')
+    assert decision.model == settings.model_flash
+
+
+def test_session_delete_cleans_own_document(monkeypatch, tmp_path):
+    from app.api.v1 import interview as interview_api
+    from app.models.schemas import InterviewDirection, InterviewRole
+    from app.services.session_store import SessionStore
+
+    store = SessionStore(tmp_path / 'sessions.sqlite3')
+    session = store.create(InterviewDirection.AI_APP_ENG, InterviewRole.TECHNICAL)
+    upload_path = tmp_path / 'uploads'
+    upload_path.mkdir()
+    (upload_path / 'sample.txt').write_text('测试资料', encoding='utf-8')
+    store.add_document({'document_id': 'sample', 'session_id': session.session_id,
+        'document_type': 'other', 'original_filename': 'sample.txt',
+        'stored_filename': 'sample.txt', 'created_at': '2026-10-10T00:00:00',
+        'expires_at': None, 'redacted': False, 'redaction_stats': {}, 'chunks': 1})
+
+    class StubVectorStore:
+        def delete_by_document(self, document_id):
+            assert document_id == 'sample'
+            return 1
+
+        def delete_by_session(self, session_id):
+            assert session_id == session.session_id
+            return 0
+
+    monkeypatch.setattr(interview_api, 'session_store', store)
+    monkeypatch.setattr(interview_api, 'vector_store', StubVectorStore())
+    monkeypatch.setattr(settings, 'upload_dir', str(upload_path))
+    response = TestClient(app).delete(f'/api/v1/interview/sessions/{session.session_id}')
+    assert response.status_code == 200
+    assert response.json()['documents'] == 1
+    assert not store.exists(session.session_id)
+    assert not (upload_path / 'sample.txt').exists()

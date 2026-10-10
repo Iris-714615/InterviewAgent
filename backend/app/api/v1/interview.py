@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.config import settings
+from app.rag.vectorstore import vector_store
 from app.models.schemas import InterviewDirection, InterviewRole, SessionCreateRequest, SessionInfo
 from app.services.session_store import session_store
 

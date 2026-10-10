@@ -33,6 +33,8 @@ class ModelRouter:
         msg = (message or "").strip()
         if scene in ("evaluation", "profile"):
             return RouteDecision(settings.model_glm, "结构化深度分析使用强模型")
+        if scene in ("interviewer", "coach", "simple") and settings.interactive_fast_model:
+            return RouteDecision(settings.model_flash, "实时对话优先使用低延迟模型")
         if any(x in msg.replace(" ", "") for x in cls.GAP_ANSWERS):
             return RouteDecision(settings.model_glm, "检测到能力缺口短回答，使用强模型追问")
         if scene in ("interviewer", "coach", "simple"):
