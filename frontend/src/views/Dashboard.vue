@@ -150,7 +150,7 @@ onMounted(() => {
 <template>
   <div class="dashboard">
     <div class="hero card">
-      <h1 class="hero-title">你的 AI 面试私教</h1>
+      <h1 class="hero-title">你的专属面试助手</h1>
       <p class="hero-desc">
         基于你的个人资料库,一对一模拟面试 + 实时辅导 + 评估反馈,<br />
         帮你迭代拿到高薪 offer。

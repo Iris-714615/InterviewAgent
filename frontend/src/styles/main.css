@@ -281,12 +281,7 @@ select {
   width: 38px;
   height: 38px;
   border-radius: 11px;
-  background: var(--gradient-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  color: #fff;
+  flex: none;
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
 }
 

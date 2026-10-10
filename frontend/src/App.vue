@@ -32,8 +32,8 @@ function toggleTheme() {
     <!-- PC 侧边栏 -->
     <aside class="sidebar">
       <div class="logo">
-        <span class="logo-icon">面</span>
-        <span>面试私教</span>
+        <img class="logo-icon" src="/favicon.svg" alt="" />
+        <span>你的专属面试助手</span>
       </div>
       <button
         class="theme-toggle"
@@ -59,7 +59,7 @@ function toggleTheme() {
     <!-- 主内容 -->
     <main class="main">
       <header class="topbar">
-        <span class="topbar-label">面试私教</span>
+        <span class="topbar-label">你的专属面试助手</span>
         <button
           class="theme-toggle theme-toggle-mobile"
           type="button"

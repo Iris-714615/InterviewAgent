@@ -12,8 +12,8 @@ const router = createRouter({
   routes
 })
 
-router.afterEach((to) => {
-  document.title = `${to.meta.title || '面试私教'} · 面试 Agent`
+router.afterEach(() => {
+  document.title = '你的专属面试助手'
 })
 
 export default router
