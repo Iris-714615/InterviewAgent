@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
@@ -32,7 +33,8 @@ def event(name, data):
     return {"event": name, "data": json.dumps(data, ensure_ascii=False)}
 
 
-RAG_WAIT_SECONDS = 1.2
+# RAG 只做"顺手带上":最多等 80ms,超时直接放弃,保证首 token 不被检索阻塞
+RAG_WAIT_SECONDS = 0.08
 
 
 def _load_session(session_id: str, user_message: ChatMessage):
@@ -50,13 +52,16 @@ def _load_session(session_id: str, user_message: ChatMessage):
 async def _wait_retrieval(task):
     """最多等待 RAG_WAIT_SECONDS,超时或异常则放弃检索,不阻塞首 token。"""
     try:
-        return await asyncio.wait_for(task, RAG_WAIT_SECONDS)
+        return await asyncio.wait_for(asyncio.shield(task), RAG_WAIT_SECONDS)
     except Exception:
+        if not task.done():
+            task.cancel()
         return [], retrieval_meta("fallback")
 
 
 @router.post("/stream")
 async def chat_stream(req: ChatRequest):
+    started = time.perf_counter()
     channel = "coach" if req.coach_mode else "interview"
     history, profile = list(req.history), None
     direction, role = normalize_direction(req.direction), req.role
@@ -106,6 +111,8 @@ async def chat_stream(req: ChatRequest):
                     except StopAsyncIteration:
                         break
                     if chunk:
+                        if not full_text:
+                            common["ttft_ms"] = int((time.perf_counter() - started) * 1000)
                         full_text.append(chunk)
                         yield event("message", {"content": chunk})
                 if not full_text:
@@ -116,6 +123,7 @@ async def chat_stream(req: ChatRequest):
             text = "\n\n本轮先保留以上内容。你可以继续补充回答，或发送‘继续’开始下一轮练习。" if full_text else guided_reply(req.model_copy(update={"role": role, "direction": direction}), history)
             full_text.append(text)
             common.update(mode="guided", model="", route_reason="基础练习引导")
+            common.setdefault("ttft_ms", int((time.perf_counter() - started) * 1000))
             yield event("meta", common)
             yield event("message", {"content": text, "fallback": True})
         finally:

@@ -2,18 +2,76 @@
 const BASE = '/api/v1'
 const CHAT_BASE = BASE
 
+export const TOKEN_KEY = 'interview-agent-token'
+export const getToken = () => {
+  try { return localStorage.getItem(TOKEN_KEY) || '' } catch { return '' }
+}
+export const setToken = (t) => {
+  try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* ignore */ }
+}
+
+// 登录失效时由 auth store 注册回调
+let onUnauthorized = null
+export function setUnauthorizedHandler(fn) { onUnauthorized = fn }
+
 async function request(url, options = {}) {
-  const { timeoutMs = 20000, ...fetchOptions } = options
-  const headers = fetchOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }
+  const { timeoutMs = 20000, headers: extraHeaders, ...fetchOptions } = options
+  const headers = { ...(fetchOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...extraHeaders }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
   let res
   try {
-    res = await fetch(url, { headers, ...fetchOptions, signal: AbortSignal.timeout(timeoutMs) })
+    res = await fetch(url, { ...fetchOptions, headers, signal: AbortSignal.timeout(timeoutMs) })
   } catch (e) {
     throw new Error('服务连接较慢，请稍后重试。已输入的内容仍在当前页面。')
   }
-  if (!res.ok) throw new Error('暂时无法完成此操作，请稍后重试。')
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const data = await res.json()
+      detail = typeof data?.detail === 'string' ? data.detail : Array.isArray(data?.detail) ? '请检查填写的内容是否完整' : ''
+    } catch { /* ignore */ }
+    if (res.status === 401 && token && onUnauthorized) onUnauthorized()
+    const err = new Error(detail || '暂时无法完成此操作，请稍后重试。')
+    err.status = res.status
+    throw err
+  }
   return res.json()
 }
+
+const post = (url, body, timeoutMs) => request(url, { method: 'POST', body: JSON.stringify(body), timeoutMs })
+
+// ============ 账号 ============
+export const register = (email, password, nickname = '') => post(`${BASE}/auth/register`, { email, password, nickname })
+export const login = (email, password) => post(`${BASE}/auth/login`, { email, password })
+export const fetchMe = () => request(`${BASE}/auth/me`)
+export const updateMe = (payload) => request(`${BASE}/auth/me`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteMe = () => request(`${BASE}/auth/me`, { method: 'DELETE' })
+
+// ============ 简历 / JD ============
+const AI_TIMEOUT = 90000
+export const analyzeJD = (jd_text) => post(`${BASE}/resume/jd/analyze`, { jd_text })
+export const generateResume = (profile, jd_text, template = 'modern', use_ai = true) =>
+  post(`${BASE}/resume/generate`, { profile, jd_text, template, use_ai }, AI_TIMEOUT)
+export const matchResume = (resume, jd_text) => post(`${BASE}/resume/match`, { resume, jd_text })
+export const diagnoseResume = (resume, jd_text) => post(`${BASE}/resume/diagnose`, { resume, jd_text })
+export const rewriteStar = (text, jd_text = '', use_ai = true) =>
+  post(`${BASE}/resume/rewrite`, { text, jd_text, use_ai }, AI_TIMEOUT)
+export const coverLetter = (resume, jd_text, use_ai = true) =>
+  post(`${BASE}/resume/cover-letter`, { resume, jd_text, use_ai }, AI_TIMEOUT)
+export const interviewQuestions = (resume, jd_text, use_ai = true) =>
+  post(`${BASE}/resume/interview-questions`, { resume, jd_text, use_ai }, AI_TIMEOUT)
+
+export const listSavedResumes = () => request(`${BASE}/resume/saved`)
+export const saveResume = (payload) => post(`${BASE}/resume/saved`, payload)
+export const getSavedResume = (id) => request(`${BASE}/resume/saved/${encodeURIComponent(id)}`)
+export const deleteSavedResume = (id) => request(`${BASE}/resume/saved/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+// ============ 求职看板 ============
+export const listJobs = () => request(`${BASE}/jobs`)
+export const createJob = (payload) => post(`${BASE}/jobs`, payload)
+export const updateJob = (id, payload) => request(`${BASE}/jobs/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteJob = (id) => request(`${BASE}/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
 // ============ 面试会话 ============
 export function createSession(direction, role, positionDescription = '') {

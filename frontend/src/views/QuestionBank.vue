@@ -260,24 +260,24 @@ onBeforeUnmount(() => {
 
     <section class="grid grid-4 stats">
       <div class="card stat">
-        <div class="stat-label"><Icon name="layers" :size="14" /> 题目总数</div>
+        <div class="stat-label"><span class="stat-ico"><Icon name="layers" :size="14" /></span>题目总数</div>
         <div class="stat-value">{{ meta?.total ?? '—' }}</div>
         <div class="stat-foot text-dim">{{ categories.length }} 个方向</div>
       </div>
       <div class="card stat">
-        <div class="stat-label"><Icon name="star" :size="14" /> 我的收藏</div>
+        <div class="stat-label"><span class="stat-ico"><Icon name="star" :size="14" /></span>我的收藏</div>
         <div class="stat-value">{{ meta?.favorite_count ?? '—' }}</div>
         <div class="stat-foot text-dim">重点题目反复打磨</div>
       </div>
       <div class="card stat">
-        <div class="stat-label"><Icon name="checkCircle" :size="14" /> 已练习题目</div>
+        <div class="stat-label"><span class="stat-ico is-success"><Icon name="checkCircle" :size="14" /></span>已练习题目</div>
         <div class="stat-value">{{ meta?.practiced_questions ?? '—' }}</div>
         <div class="progress mt-2">
           <span :style="{ width: meta?.total ? `${Math.min(100, (meta.practiced_questions / meta.total) * 100)}%` : '0%' }" />
         </div>
       </div>
       <div class="card stat">
-        <div class="stat-label"><Icon name="history" :size="14" /> 累计练习</div>
+        <div class="stat-label"><span class="stat-ico is-info"><Icon name="history" :size="14" /></span>累计练习</div>
         <div class="stat-value">{{ meta?.practice_total ?? '—' }}<small class="text-dim text-sm"> 次</small></div>
         <div class="stat-foot text-dim">每次作答都会被记录</div>
       </div>
@@ -572,7 +572,7 @@ onBeforeUnmount(() => {
 
 .qd { width: min(560px, 100vw); }
 .qd-title { margin: 0; font-size: 18px; line-height: 1.6; font-weight: 650; }
-.pos-link { color: var(--primary); }
+.pos-link { color: var(--primary-soft); }
 .points { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-soft); line-height: 1.65; }
 .outline { margin-top: 8px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--primary-bg); border: 1px solid var(--primary-border); line-height: 1.75; white-space: pre-wrap; }
 .outline.masked { background: var(--bg-soft); border-style: dashed; border-color: var(--border-strong); color: var(--text-dim); text-align: center; cursor: pointer; }
@@ -587,7 +587,7 @@ onBeforeUnmount(() => {
 .rand { width: min(560px, 100%); }
 .rand-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .rand-item:hover { border-color: var(--primary-border); background: var(--bg-hover); }
-.rand-idx { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--primary-bg); color: var(--primary); font-weight: 600; font-size: 13px; }
+.rand-idx { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--primary-bg); color: var(--primary-soft); font-weight: 600; font-size: 13px; }
 .text-left { text-align: left; }
 
 @media (max-width: 768px) {

@@ -407,6 +407,23 @@ onBeforeUnmount(() => {
           <div v-if="chat.restored" class="restored-tip">
             <Icon name="history" :size="13" /> 已从面试记录恢复，可继续作答
           </div>
+          <div v-if="!chat.messages.length && chat.streaming" class="msg-skeleton" aria-label="面试官准备中">
+            <div class="skeleton sk-avatar" />
+            <div class="sk-lines">
+              <div class="skeleton sk-line" style="width: 36%" />
+              <div class="skeleton sk-line" style="width: 88%" />
+              <div class="skeleton sk-line" style="width: 72%" />
+            </div>
+          </div>
+          <div v-else-if="!chat.messages.length" class="welcome">
+            <div class="welcome-art" aria-hidden="true">
+              <span class="ring ring-1" />
+              <span class="ring ring-2" />
+              <div class="welcome-icon"><Icon name="sparkles" :size="26" /></div>
+            </div>
+            <div class="welcome-title">面试官已就位</div>
+            <div class="welcome-desc">发送第一条消息开始作答，或使用下方快捷提问热身</div>
+          </div>
           <ChatMessage
             v-for="m in chat.messages"
             :key="m.message_id"
@@ -518,7 +535,18 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div v-if="!chat.profile" class="empty panel-empty">
+      <div v-if="!chat.profile && chat.streaming" class="panel-body panel-skeleton" aria-label="画像分析中">
+        <div class="kpis">
+          <div class="skeleton sk-kpi" />
+          <div class="skeleton sk-kpi" />
+        </div>
+        <div v-for="n in 4" :key="n" class="sk-dim">
+          <div class="skeleton sk-line" style="width: 40%" />
+          <div class="skeleton sk-bar" />
+        </div>
+      </div>
+
+      <div v-else-if="!chat.profile" class="empty panel-empty">
         <div class="empty-icon"><Icon name="chart" :size="22" /></div>
         <div class="empty-title">画像生成中</div>
         <div class="empty-desc">完成 1–2 轮作答后，这里会实时展示各维度表现与面试官的追问策略</div>
@@ -596,6 +624,7 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 16px;
   padding: 14px 24px; border-bottom: 1px solid var(--border);
   background: var(--bg-glass); backdrop-filter: blur(12px);
+  box-shadow: 0 1px 0 var(--border), 0 6px 20px -12px var(--primary-glow);
 }
 .topbar-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -613,6 +642,29 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-pill); background: var(--bg-soft); border: 1px solid var(--border);
 }
 
+/* 欢迎空状态（静态点缀，无持续动画） */
+.welcome { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 16px 24px; gap: 8px; }
+.welcome-art { position: relative; width: 120px; height: 120px; display: grid; place-items: center; margin-bottom: 8px; }
+.ring { position: absolute; border-radius: 50%; border: 1px dashed var(--primary-border); }
+.ring-1 { inset: 0; opacity: 0.6; }
+.ring-2 { inset: 20px; opacity: 0.9; background: var(--primary-bg); }
+.welcome-icon {
+  position: relative; width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center;
+  background: var(--gradient-primary); color: var(--text-on-primary); box-shadow: var(--shadow-glow);
+}
+.welcome-title { font-size: 18px; font-weight: 700; }
+.welcome-desc { font-size: 13.5px; color: var(--text-dim); max-width: 340px; line-height: 1.6; }
+
+/* 骨架屏 */
+.msg-skeleton { display: flex; gap: 12px; align-items: flex-start; }
+.sk-avatar { width: 36px; height: 36px; border-radius: 12px; flex: none; }
+.sk-lines { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--bg-card); border: 1px solid var(--border); }
+.sk-line { height: 12px; border-radius: 6px; }
+.sk-bar { height: 8px; border-radius: 4px; }
+.sk-kpi { height: 66px; border-radius: var(--radius); }
+.sk-dim { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border); }
+.panel-skeleton { padding-top: 0; }
+
 /* ---------- 输入区 ---------- */
 .composer-wrap { padding: 8px 24px 20px; }
 .composer-wrap > * { max-width: 860px; margin-left: auto; margin-right: auto; }
@@ -622,7 +674,8 @@ onBeforeUnmount(() => {
 
 .composer {
   border-radius: var(--radius-lg); border: 1px solid var(--border-strong);
-  background: var(--bg-input); box-shadow: var(--shadow-soft);
+  background: var(--bg-input);
+  box-shadow: var(--shadow-soft);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .composer:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
@@ -670,7 +723,11 @@ onBeforeUnmount(() => {
 .panel-mask { display: none; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 12px; }
 .panel-body { flex: 1; overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 16px; }
-.panel-empty { flex: 1; padding: 32px 20px; }
+.panel-empty {
+  flex: 1; padding: 32px 20px; margin: 0 16px 16px; border-radius: var(--radius-lg);
+  border: 1px dashed var(--primary-border);
+  background: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 14px 14px, var(--bg-card);
+}
 .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .kpi { padding: 12px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
 .kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }

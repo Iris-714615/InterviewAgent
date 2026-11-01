@@ -33,7 +33,7 @@ const service = computed(() => {
 watch(theme, (value) => {
   document.documentElement.dataset.theme = value
   localStorage.setItem('interview-agent-theme', value)
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', value === 'dark' ? '#000000' : '#fff8fa')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', value === 'dark' ? '#000000' : '#ff7ca2')
 }, { immediate: true })
 
 function toggleTheme() {

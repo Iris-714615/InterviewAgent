@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     cost_glm_input_per_million: float = 2.0
     cost_glm_output_per_million: float = 8.0
 
+    # ============ 账号体系 ============
+    auth_secret: str = "change-me-in-production-interview-agent"
+    token_ttl_seconds: int = 60 * 60 * 24 * 30
+
     # ============ CORS ============
     cors_origins: str = "http://localhost:5173,http://localhost:4173"
 

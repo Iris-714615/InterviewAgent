@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(cached_document_count)
     except Exception:
         logger.warning("document count warmup failed", exc_info=True)
+    # 预热 LLM 连接(TLS/HTTP2 握手),让首个真实请求省去建连耗时
+    if settings.api_key and not settings.api_key.startswith("sk-your"):
+        try:
+            from app.core.llm import llm_service
+            await asyncio.wait_for(llm_service.client.models.list(), 5)
+        except Exception:
+            logger.info("llm warmup skipped")
     yield
     # 关闭:无特殊清理
 

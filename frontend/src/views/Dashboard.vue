@@ -2,6 +2,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
+import Sparkline from '../components/Sparkline.vue'
+import RingProgress from '../components/RingProgress.vue'
+import PlatformLinks from '../components/PlatformLinks.vue'
+import PositionDetailModal from '../components/PositionDetailModal.vue'
 import { deleteSession, getEvaluation, getQuestionsMeta, listSessions } from '../api'
 import { useChatStore } from '../stores/chat'
 import { ROLE_NAMES, useCatalogStore } from '../stores/catalog'
@@ -15,6 +19,11 @@ const sessions = ref([])
 const loadingSessions = ref(true)
 const qMeta = ref(null)
 const sessionFilter = ref('all')
+const detailPos = ref(null)
+function onPickDetail(p) {
+  detailPos.value = null
+  startWith(p.id)
+}
 
 const features = [
   { icon: 'message', title: '模拟面试', desc: '数十个岗位 + 自定义岗位，技术 / 行为 / HR 三类面试官', path: '/chat', tone: 'primary' },
@@ -22,6 +31,16 @@ const features = [
   { icon: 'database', title: '个人资料库', desc: '上传简历与 JD，Agent 结合你的经历精准追问', path: '/knowledge', tone: 'success' },
   { icon: 'chart', title: '评估报告', desc: '多维雷达、亮点短板、改进计划与成长对比', path: '/report', tone: 'warning' }
 ]
+
+const flow = [
+  { icon: 'database', title: '准备资料', desc: '上传简历与 JD', path: '/knowledge' },
+  { icon: 'library', title: '刷题热身', desc: '分方向精选题库', path: '/questions' },
+  { icon: 'message', title: '模拟面试', desc: '实时追问与辅导', path: '/chat' },
+  { icon: 'chart', title: '复盘提升', desc: '多维报告与计划', path: '/report' }
+]
+const platformKeyword = ref('')
+const scoreSeries = computed(() => trend.value.map((s) => Math.round(s.overall_score)))
+const practicePct = computed(() => qMeta.value?.total ? Math.min(100, Math.round(qMeta.value.practiced_questions / qMeta.value.total * 100)) : 0)
 
 async function loadSessions() {
   loadingSessions.value = true
@@ -147,7 +166,8 @@ onMounted(async () => {
         <p class="hero-desc">选择任意岗位或自定义目标职位，AI 面试官会结合你的简历与 JD 实时追问、即时辅导，并在结束后生成多维评估报告。</p>
         <div class="row wrap gap-3 mt-4">
           <button class="btn btn-gradient btn-lg" @click="router.push('/chat')"><Icon name="play" :size="18" /> 开始模拟面试</button>
-          <button class="btn btn-secondary btn-lg" @click="router.push('/questions')"><Icon name="library" :size="18" /> 浏览题库</button>
+          <button class="btn btn-secondary btn-lg" @click="router.push('/questions')"><Icon name="library" :size="18" /> 去刷题库</button>
+          <button class="btn btn-ghost btn-lg" @click="router.push('/questions')"><Icon name="library" :size="18" /> 浏览题库</button>
           <button v-if="chat.hasMessages && chat.sessionId" class="btn btn-ghost btn-lg" @click="router.push('/chat')">
             <Icon name="history" :size="18" /> 继续上次面试
           </button>
@@ -169,29 +189,49 @@ onMounted(async () => {
     </section>
 
     <!-- 统计 -->
+    <section class="flow card mt-4" aria-label="求职流程">
+      <button v-for="(f, i) in flow" :key="f.title" class="flow-step" @click="router.push(f.path)">
+        <span class="flow-no">{{ i + 1 }}</span>
+        <span class="flow-icon"><Icon :name="f.icon" :size="18" /></span>
+        <span class="flow-text">
+          <b class="text-sm">{{ f.title }}</b>
+          <span class="text-xs text-dim">{{ f.desc }}</span>
+        </span>
+        <Icon v-if="i < flow.length - 1" name="chevronRight" :size="16" class="flow-arrow" />
+      </button>
+    </section>
+
     <section class="grid-4 mt-4">
-      <div class="card stat">
+      <div class="card stat stat-vis">
         <div class="stat-label"><Icon name="message" :size="14" /> 面试场次</div>
         <div class="stat-value">{{ loadingSessions ? '—' : sessions.length }}</div>
         <div class="stat-foot text-dim">已评估 {{ scored.length }} 场</div>
+        <Sparkline v-if="scoreSeries.length >= 2" class="stat-spark" :values="scoreSeries" :width="120" :height="40" tone="info" />
       </div>
-      <div class="card stat">
+      <div class="card stat stat-vis">
         <div class="stat-label"><Icon name="target" :size="14" /> 平均得分</div>
         <div class="stat-value" :class="avgScore != null && `text-${scoreTone(avgScore)}`">{{ avgScore ?? '—' }}</div>
         <div class="stat-foot text-dim">最高 {{ bestScore ?? '—' }}</div>
+        <RingProgress class="stat-ring" :value="avgScore || 0" :size="56" :stroke="6" :tone="scoreTone(avgScore) || 'primary'">
+          <span class="ring-txt">{{ avgScore ?? '–' }}</span>
+        </RingProgress>
       </div>
-      <div class="card stat">
+      <div class="card stat stat-vis">
         <div class="stat-label"><Icon name="trendUp" :size="14" /> 最近进步</div>
         <div class="stat-value" :class="delta == null ? '' : delta >= 0 ? 'text-success' : 'text-danger'">
           <template v-if="delta == null">—</template>
           <template v-else>{{ delta >= 0 ? '+' : '' }}{{ delta }}</template>
         </div>
         <div class="stat-foot text-dim">对比上一场已评估面试</div>
+        <Sparkline v-if="scoreSeries.length >= 2" class="stat-spark" :values="scoreSeries" :width="120" :height="40" :tone="delta != null && delta < 0 ? 'warning' : 'success'" />
       </div>
-      <div class="card stat">
+      <div class="card stat stat-vis">
         <div class="stat-label"><Icon name="library" :size="14" /> 题库练习</div>
         <div class="stat-value">{{ qMeta?.practiced_questions ?? '—' }}<small class="text-dim text-sm"> / {{ qMeta?.total ?? '—' }}</small></div>
-        <div class="progress mt-2"><span :style="{ width: qMeta?.total ? `${Math.min(100, qMeta.practiced_questions / qMeta.total * 100)}%` : '0%' }" /></div>
+        <div class="stat-foot text-dim">已覆盖 {{ practicePct }}%</div>
+        <RingProgress class="stat-ring" :value="practicePct" :size="56" :stroke="6" tone="info">
+          <span class="ring-txt">{{ practicePct }}%</span>
+        </RingProgress>
       </div>
     </section>
 
@@ -210,14 +250,33 @@ onMounted(async () => {
             <div v-for="i in 6" :key="i" class="skeleton sk-pos" />
           </div>
           <div v-else class="grid-3 pos-grid">
-            <button v-for="p in catalog.hotPositions.slice(0, 6)" :key="p.id" class="pos-card" @click="startWith(p.id)">
+            <div
+              v-for="p in catalog.hotPositions.slice(0, 6)"
+              :key="p.id"
+              class="pos-card"
+              role="button"
+              tabindex="0"
+              :aria-label="`查看${p.name}岗位详情`"
+              @click="detailPos = p"
+              @keydown.enter.self.prevent="detailPos = p"
+            >
               <div class="row gap-2">
-                <span class="pos-icon"><Icon :name="catalog.categoryMap[p.category]?.icon || 'briefcase'" :size="16" /></span>
-                <b class="truncate flex-1">{{ p.name }}</b>
-                <Icon name="arrowRight" :size="14" class="pos-go" />
+                <span class="pos-icon"><Icon :name="catalog.categoryMap[p.category]?.icon || 'briefcase'" :size="18" /></span>
+                <div class="flex-1 pos-head">
+                  <b class="truncate">{{ p.name }}</b>
+                  <span class="text-xs text-dim truncate">{{ catalog.categoryMap[p.category]?.name || '热门岗位' }}</span>
+                </div>
+                <span class="pos-hot">热</span>
               </div>
               <p class="text-xs text-dim clamp-2 mt-2">{{ p.focus }}</p>
-            </button>
+              <div class="pos-skills mt-2">
+                <span v-for="s in (p.skills || []).slice(0, 3)" :key="s" class="pos-skill">{{ s }}</span>
+              </div>
+              <div class="pos-actions mt-3">
+                <button class="pos-btn" @click.stop="detailPos = p">详情 <Icon name="chevronRight" :size="12" /></button>
+                <button class="pos-btn pos-btn-go" @click.stop="startWith(p.id)"><Icon name="play" :size="12" /> 开始面试</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -290,6 +349,14 @@ onMounted(async () => {
           </div>
         </section>
 
+        <!-- 招聘平台直达 -->
+        <section class="card">
+          <div class="section-title mb-2"><Icon name="route" :size="16" /> 招聘平台直达</div>
+          <p class="text-xs text-dim mb-2">输入岗位，一键到 Boss直聘 / 智联 / 猎聘等平台搜索，找到 JD 后回来定制简历。</p>
+          <input v-model="platformKeyword" class="input" type="text" placeholder="如：前端开发工程师" maxlength="40" aria-label="岗位关键词" />
+          <PlatformLinks class="mt-3" :keyword="platformKeyword || catalog.hotPositions[0]?.name || ''" compact />
+        </section>
+
         <!-- 功能入口 -->
         <section class="card">
           <div class="section-title mb-2"><Icon name="grid" :size="16" /> 功能</div>
@@ -319,32 +386,54 @@ onMounted(async () => {
         </section>
       </aside>
     </div>
+
+    <PositionDetailModal
+      :position="detailPos"
+      :category="detailPos ? catalog.categoryMap[detailPos.category] : null"
+      action-text="开始面试"
+      action-icon="play"
+      @close="detailPos = null"
+      @select="onPickDetail"
+    />
   </div>
 </template>
 
 <style scoped>
 .dash { padding-bottom: 48px; }
-.hero { position: relative; display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; padding: 40px; border-radius: var(--radius-lg); background: var(--primary); color: var(--text-on-primary); overflow: hidden; }
-.hero-title { margin: 16px 0 12px; font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1.2; color: var(--text-on-primary); }
-.hero-desc { margin: 0; max-width: 560px; color: var(--text-on-primary); line-height: 1.8; font-weight: 500; }
-.hero-body :deep(.tag) { background: var(--text-on-primary); color: var(--primary); border-color: var(--text-on-primary); }
-.hero-body :deep(.btn-gradient) { background: var(--text-on-primary); color: var(--primary); }
-.hero-body :deep(.btn-gradient:hover:not(:disabled)) { opacity: .88; }
-.hero-body :deep(.btn-secondary) { background: transparent; color: var(--text-on-primary); border: 2px solid var(--text-on-primary); }
-.hero-body :deep(.btn-secondary:hover:not(:disabled)) { background: rgba(128, 128, 128, .2); }
-.hero-body :deep(.btn-ghost) { color: var(--text-on-primary); font-weight: 700; }
-.hero-body :deep(.btn-ghost:hover:not(:disabled)) { background: rgba(128, 128, 128, .2); }
+.hero { position: relative; display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; padding: 44px 40px; border-radius: var(--radius-lg); background: var(--gradient-hero), var(--bg-card); border: 1px solid var(--border); box-shadow: var(--shadow-soft); color: var(--text); overflow: hidden; }
+.hero-title { margin: 16px 0 12px; font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1.2; background: var(--gradient-text); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.hero-desc { margin: 0; max-width: 560px; color: var(--text-soft); line-height: 1.8; }
 .hero-side { position: relative; display: flex; align-items: center; justify-content: center; }
-.hero-star { position: absolute; color: var(--text-on-primary); }
+.hero-star { position: absolute; color: var(--primary); opacity: .55; }
 .hero-star.s1 { right: 8px; top: -6px; }
-.hero-star.s2 { right: 0; top: 58px; }
-.hero-star.s3 { right: 44px; top: 76px; }
-.hero-card { position: relative; width: 100%; max-width: 320px; padding: 18px; background: var(--text-on-primary); color: var(--primary); border: 0; margin-top: 40px; }
-.hero-card .text-soft { color: var(--primary); opacity: .8; }
-.hero-card .text-primary { color: var(--primary); }@media (max-width: 768px) {
+.hero-star.s2 { right: 0; top: 58px; opacity: .35; }
+.hero-star.s3 { right: 44px; top: 76px; opacity: .3; }
+.hero-card { position: relative; width: 100%; max-width: 320px; padding: 18px; background: var(--bg-elevated); border: 1px solid var(--border); box-shadow: var(--shadow-soft); margin-top: 40px; backdrop-filter: blur(10px); }
+@media (max-width: 768px) {
   .hero { grid-template-columns: 1fr; padding: 24px 20px; }
   .hero-title { font-size: 28px; }
   .hero-side { display: none; }
+}
+.flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 12px; padding: 12px; }
+@media (min-width: 1360px) { .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.flow-step { position: relative; flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-soft); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: all var(--dur) var(--ease); box-shadow: var(--shadow-xs); }
+.flow-step:hover { background: var(--bg-hover); border-color: var(--primary-border); transform: translateY(-2px); box-shadow: var(--shadow-soft); }
+.flow-step:focus-visible { outline: 2px solid var(--primary-border); outline-offset: 2px; }
+.flow-no { position: absolute; top: 8px; right: 10px; font-size: 10px; font-weight: 800; color: var(--text-dim); }
+.flow-icon { width: 44px; height: 44px; border-radius: var(--radius-sm); display: grid; place-items: center; flex: none; background: var(--gradient-soft); color: var(--primary-soft); box-shadow: var(--shadow-xs); }
+.flow-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.4; gap: 2px; }
+.flow-text b { font-size: 14px; font-weight: 650; }
+.flow-text small, .flow-text span { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-arrow { display: none; margin-left: auto; color: var(--primary-soft); flex: none; opacity: .6; transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
+.flow-step:hover .flow-arrow { opacity: 1; transform: translateX(2px); }
+.stat-vis { position: relative; overflow: hidden; background: var(--bg-elevated); border-radius: var(--radius-sm); }
+.stat-spark { position: absolute; right: 12px; bottom: 12px; opacity: .85; pointer-events: none; }
+.stat-ring { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); opacity: .92; }
+.ring-txt { font-size: 12px; font-weight: 800; }
+@media (max-width: 768px) {
+  .flow { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .flow-step { padding: 12px; }
+  .stat-spark { width: 80px; height: 28px; }
 }
 
 .stat-value small { font-weight: 500; }
@@ -355,15 +444,22 @@ onMounted(async () => {
 .pos-card { display: block; width: 100%; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease), background var(--dur) var(--ease); }
 .pos-card:hover { border-color: var(--primary-border); background: var(--bg-hover); transform: translateY(-2px); }
 .pos-card:focus-visible { outline: 2px solid var(--primary-border); }
-.pos-icon { width: 28px; height: 28px; border-radius: var(--radius-xs); display: grid; place-items: center; background: var(--primary-bg); color: var(--primary); flex: none; }
-.pos-go { color: var(--text-dim); transition: transform var(--dur) var(--ease), color var(--dur) var(--ease); }
-.pos-card:hover .pos-go { color: var(--primary); transform: translateX(3px); }
+.pos-icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--gradient-soft); color: var(--primary-soft); flex: none; }
+.pos-head { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.pos-hot { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--text-on-primary); background: linear-gradient(135deg, #ff9a5c, #ff4d6d); }
+.pos-skills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pos-skill { padding: 2px 9px; border-radius: 999px; font-size: 11px; color: var(--text-soft); background: var(--bg-hover); border: 1px solid var(--border); }
+.pos-actions { display: flex; gap: 8px; }
+.pos-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 34px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: all var(--dur) var(--ease); }
+.pos-btn:hover { border-color: var(--primary-border); color: var(--primary-soft); }
+.pos-btn-go { border: 0; color: var(--text-on-primary); background: var(--gradient-primary); box-shadow: var(--shadow-btn); }
+.pos-btn-go:hover { color: var(--text-on-primary); filter: brightness(1.08); }
 .pos-card p { margin-bottom: 0; }
 
-.session { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
-.session:hover { border-color: var(--primary-border); background: var(--bg-hover); }
-.session:focus-visible { outline: 2px solid var(--primary-border); }
-.session-icon { width: 34px; height: 34px; border-radius: var(--radius-xs); display: grid; place-items: center; background: var(--bg-card); color: var(--text-soft); border: 1px solid var(--border); flex: none; }
+.session { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); cursor: pointer; transition: all var(--dur) var(--ease); box-shadow: var(--shadow-xs); }
+.session:hover { border-color: var(--primary-border); background: var(--bg-hover); transform: translateX(2px); }
+.session:focus-visible { outline: 2px solid var(--primary-border); outline-offset: 2px; }
+.session-icon { width: 36px; height: 36px; border-radius: var(--radius-sm); display: grid; place-items: center; background: var(--gradient-soft); color: var(--primary-soft); border: none; flex: none; box-shadow: var(--shadow-xs); }
 .session-info { min-width: 0; }
 .score { min-width: 44px; text-align: center; font-weight: 800; font-size: 16px; padding: 2px 8px; border-radius: var(--radius-pill); }
 .score-success { color: var(--success); background: var(--success-bg); }
@@ -376,17 +472,17 @@ onMounted(async () => {
 .trend { display: flex; align-items: flex-end; gap: 8px; height: 140px; }
 .trend-bar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; background: none; border: 0; padding: 0; cursor: pointer; }
 .trend-num { font-size: 11px; font-weight: 700; color: var(--text-soft); }
-.trend-pill { width: 100%; max-width: 22px; border-radius: 6px 6px 2px 2px; transition: height .4s var(--ease), opacity var(--dur); opacity: .85; }
+.trend-pill { width: 100%; max-width: 22px; border-radius: 6px 6px 2px 2px; transition: height .4s var(--ease), opacity var(--dur); }
 .trend-bar:hover .trend-pill { opacity: 1; }
 .bg-success { background: var(--success); }
 .bg-warning { background: var(--warning); }
 .bg-danger { background: var(--danger); }
 
-.feature { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background var(--dur) var(--ease); }
-.feature:hover { background: var(--bg-hover); }
+.feature { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: all var(--dur) var(--ease); }
+.feature:hover { background: var(--bg-hover); border-color: var(--border); transform: translateX(2px); }
 .f-desc { display: block; margin-top: 2px; line-height: 1.5; }
-.f-icon { width: 36px; height: 36px; border-radius: var(--radius-sm); display: grid; place-items: center; flex: none; }
-.f-primary { background: var(--primary-bg); color: var(--primary); }
+.f-icon { width: 38px; height: 38px; border-radius: var(--radius-sm); display: grid; place-items: center; flex: none; box-shadow: var(--shadow-xs); }
+.f-primary { background: var(--primary-bg); color: var(--primary-soft); }
 .f-info { background: var(--info-bg); color: var(--info); }
 .f-success { background: var(--success-bg); color: var(--success); }
 .f-warning { background: var(--warning-bg); color: var(--warning); }

@@ -116,7 +116,7 @@ onBeforeUnmount(() => speechController?.abort())
   width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
   display: grid; place-items: center;
   background: var(--gradient-primary); color: var(--text-on-primary);
-  box-shadow: var(--shadow-glow);
+  box-shadow: var(--shadow-glow), inset 0 0 0 1px rgba(255, 255, 255, .18);
 }
 .msg.user .avatar { background: var(--bg-hover); color: var(--text-soft); box-shadow: none; border: 1px solid var(--border); }
 .msg.coach .avatar { background: var(--coach); box-shadow: none; }
@@ -130,12 +130,14 @@ onBeforeUnmount(() => speechController?.abort())
 }
 .bubble {
   position: relative; padding: 12px 16px; border-radius: 4px var(--radius) var(--radius) var(--radius);
-  background: var(--bg-card); border: 1px solid var(--border); box-shadow: var(--shadow-xs);
+  background: var(--bg-card); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+  border-left: 3px solid var(--primary-border);
   word-break: break-word; line-height: 1.7;
 }
 .msg.user .bubble {
   white-space: pre-wrap; border-radius: var(--radius) 4px var(--radius) var(--radius);
   background: var(--gradient-primary); color: var(--text-on-primary); border-color: transparent;
+  box-shadow: var(--shadow-btn);
 }
 .msg.coach .bubble { background: color-mix(in srgb, var(--coach) 9%, var(--bg-card)); border-color: color-mix(in srgb, var(--coach) 35%, transparent); }
 .thinking { display: flex; gap: 5px; padding: 6px 2px; }
