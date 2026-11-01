@@ -1,475 +1,224 @@
 <script setup>
-import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
-import { useChatStore } from '../stores/chat'
-import { recognizeASR } from '../api'
-import { speakText, stopSpeech } from '../utils/speech'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import Icon from '../components/Icon.vue'
 import ChatMessage from '../components/ChatMessage.vue'
+import PositionPicker from '../components/PositionPicker.vue'
+import { useChatStore } from '../stores/chat'
+import { ROLE_NAMES, useCatalogStore } from '../stores/catalog'
+import { useVoiceInput } from '../composables/useVoiceInput'
+import { useSystemAudio } from '../composables/useSystemAudio'
+import { speakText, stopSpeech } from '../utils/speech'
+import { toast } from '../utils/toast'
 
+const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
+const catalog = useCatalogStore()
 
 const input = ref('')
 const scrollEl = ref(null)
+const inputEl = ref(null)
+const starting = ref(false)
+const panelOpen = ref(typeof window !== 'undefined' ? window.innerWidth > 1100 : true)
+const pendingQuestion = ref('')
 
-// ============ 刷新后自动恢复上次对话 ============
-const restoreTip = ref('') // 恢复提示文案
-onMounted(async () => {
-  // 已有会话(如从总览回顾)无需恢复
-  chat.loadServiceStatus()
-  if (chat.sessionId) return
-  const ok = await chat.restoreFromLocal()
-  if (ok) {
-    restoreTip.value = `已恢复上次对话(${chat.messages.length} 条消息)`
-    await scrollToBottom()
-    // 4 秒后自动隐藏提示
-    setTimeout(() => { restoreTip.value = '' }, 4000)
-  }
+// ============ 配置向导 ============
+const draft = ref({
+  direction: chat.direction || '',
+  role: chat.role || 'technical',
+  positionDescription: chat.positionDescription || ''
 })
+const inSession = computed(() => Boolean(chat.sessionId) || chat.messages.length > 0)
+const draftName = computed(() => catalog.nameOf(draft.value.direction))
+const canStart = computed(() => Boolean(draft.value.direction) && !starting.value)
 
-const directions = [
-  { value: 'ai_app_engineer', label: 'AI大模型应用' },
-  { value: 'ai_dev_engineer', label: 'AI应用开发' },
-  { value: 'ai_product_manager', label: 'AI产品经理' }
-]
-const roles = [
-  { value: 'technical', label: '技术面' },
-  { value: 'hr', label: 'HR面' },
-  { value: 'behavioral', label: '行为面' }
-]
+async function startInterview() {
+  if (!canStart.value) return
+  starting.value = true
+  stopAutoTTS()
+  chat.reset()
+  chat.configure({
+    direction: draft.value.direction,
+    directionName: draftName.value,
+    role: draft.value.role,
+    positionDescription: draft.value.positionDescription.trim()
+  })
+  try {
+    await chat.startSession()
+  } catch {
+    chat.runtimeMode = 'guided'
+    toast.info('服务连接较慢，已切换到基础练习模式')
+  }
+  starting.value = false
+  const opener = pendingQuestion.value
+    ? `开始面试。请先考察这道题：${pendingQuestion.value}`
+    : '开始面试'
+  pendingQuestion.value = ''
+  await chat.send(opener)
+  focusInput()
+}
 
-const canSend = computed(() => input.value.trim() && !chat.streaming)
+// ============ 面试中 ============
+const roleName = computed(() => ROLE_NAMES[chat.role] || chat.role)
+const sessionTitle = computed(() => chat.directionName || catalog.nameOf(chat.direction))
+const canSend = computed(() => Boolean(input.value.trim()) && !chat.streaming)
+
+const modeInfo = computed(() => ({
+  normal: { text: '服务正常', dot: 'success' },
+  ok: { text: '服务正常', dot: 'success' },
+  degraded: { text: '基础练习', dot: 'warning' },
+  guided: { text: '基础练习', dot: 'warning' },
+  demo: { text: '演示模式', dot: 'warning' }
+}[chat.runtimeMode] || { text: chat.runtimeMode, dot: '' }))
+
+const ragLabel = computed(() => ({
+  used: '已引用资料', empty: '资料无匹配', disabled: '资料检索关闭', unconfigured: '未上传资料',
+  error: '资料暂不可用', fallback: '资料暂不可用', keyword: '本地检索', pending: '检索中'
+}[chat.rag?.status] || '等待检索'))
+
 const profileDimensions = computed(() => Object.entries(chat.profile?.dimensions || {}).map(([name, value]) => ({
   name,
-  score: Number(value?.score || 0),
+  score: Math.round(Number(value?.score || 0)),
   evidence: value?.evidence || ''
 })))
-const ragLabel = computed(() => ({
-  used: '已启用', empty: '无匹配', disabled: '已关闭', unconfigured: '未配置', error: '资料暂不可用', fallback: '资料暂不可用', keyword: '本地检索', pending: '检索中'
-}[chat.rag?.status] || '等待检索'))
-const modeLabel = computed(() => ({ normal: '正常', ok: '正常', degraded: '基础练习', guided: '基础练习', demo: '演示' }[chat.runtimeMode] || chat.runtimeMode))
 const profileConfidence = computed(() => {
-  const value = chat.profile?.confidence
-  return typeof value === 'number' ? `${Math.round(value * 100)}%` : '暂无数值'
+  const v = chat.profile?.confidence
+  return typeof v === 'number' ? Math.round(v * 100) : null
 })
 
-function profileTrend(score) {
-  if (score >= 80) return '强项'
-  if (score >= 60) return '稳定'
-  return '待提升'
+function scoreTone(score) {
+  if (score >= 80) return { text: '强项', cls: 'success' }
+  if (score >= 60) return { text: '稳定', cls: 'info' }
+  return { text: '待提升', cls: 'warning' }
 }
 
-async function scrollToBottom() {
+const quickPrompts = computed(() => chat.coachMode
+  ? ['这道题的参考答案是什么？', '帮我用 STAR 法则重组刚才的回答', '面试官最想听到什么？']
+  : ['请换一道题', '能再具体说明一下问题吗？', '我想先思考一下思路'])
+
+async function scrollToBottom(force = false) {
   await nextTick()
-  if (scrollEl.value) {
-    scrollEl.value.scrollTop = scrollEl.value.scrollHeight
-  }
+  const el = scrollEl.value
+  if (!el) return
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160
+  if (force || nearBottom) el.scrollTop = el.scrollHeight
 }
 
-async function handleSend() {
-  stopAutoTTS()
-  const msg = input.value.trim()
+function focusInput() {
+  nextTick(() => inputEl.value?.focus())
+}
+
+async function handleSend(text) {
+  const msg = (typeof text === 'string' ? text : input.value).trim()
   if (!msg || chat.streaming) return
+  stopAutoTTS()
+  voice.stop()
   input.value = ''
+  autoGrow()
+  scrollToBottom(true)
   await chat.send(msg)
   scrollToBottom()
 }
 
 function onKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     handleSend()
   }
 }
 
+function autoGrow() {
+  nextTick(() => {
+    const el = inputEl.value
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`
+  })
+}
+
 function newInterview() {
+  if (chat.streaming) return
+  if (chat.hasMessages && !window.confirm('开始新面试后，当前对话仍保存在面试记录中。确认继续？')) return
+  stopAutoTTS()
+  audio.stop()
+  draft.value = { direction: chat.direction, role: chat.role, positionDescription: chat.positionDescription }
   chat.reset()
 }
 
 async function finishAndEvaluate() {
-  if (!chat.hasMessages) return
+  if (!chat.hasMessages || chat.evaluating) return
+  if (chat.answerCount < 2 && !window.confirm('目前作答较少，报告的参考价值有限。仍要结束并生成报告吗？')) return
+  stopAutoTTS()
+  audio.stop()
   await chat.runEvaluation()
   router.push('/report')
 }
 
-// 方向中文映射
-const directionMap = {
-  ai_app_engineer: 'AI大模型应用工程师',
-  ai_dev_engineer: 'AI应用开发工程师',
-  ai_product_manager: 'AI产品经理'
-}
-// 角色中文映射
-const roleMap = {
-  technical: '技术面',
-  hr: 'HR面',
-  behavioral: '行为面'
-}
-// 消息角色映射
-const messageRoleMap = {
-  user: '我',
-  assistant: '面试官'
+// ============ 导出 Markdown ============
+function pad(n) { return String(n).padStart(2, '0') }
+function stamp(d, sep = false) {
+  const date = `${d.getFullYear()}${sep ? '-' : ''}${pad(d.getMonth() + 1)}${sep ? '-' : ''}${pad(d.getDate())}`
+  const time = `${pad(d.getHours())}${sep ? ':' : ''}${pad(d.getMinutes())}${sep ? ':' : ''}${pad(d.getSeconds())}`
+  return sep ? `${date} ${time}` : `${date}_${time}`
 }
 
-// 生成时间戳 YYYYMMDD_HHmmss
-function makeTimestamp() {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-}
-
-// 格式化时间 YYYY-MM-DD HH:mm:ss
-function formatTime(d) {
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
-// 导出当前对话为 Markdown 文件
 function exportChat() {
-  if (!chat.hasMessages) return
+  if (!chat.messages.length) return
   const now = new Date()
-  const directionText = directionMap[chat.direction] || chat.direction
-  const roleText = roleMap[chat.role] || chat.role
-  const lines = []
-  lines.push('# 模拟面试记录')
-  lines.push('')
-  lines.push(`- 方向:${directionText}`)
-  lines.push(`- 角色:${roleText}`)
-  lines.push(`- 时间:${formatTime(now)}`)
-  lines.push(`- 消息数:${chat.messages.length}`)
-  lines.push('')
-  lines.push('---')
-  lines.push('')
+  const lines = [
+    '# 模拟面试记录', '',
+    `- 岗位：${sessionTitle.value}`,
+    `- 轮次：${roleName.value}`,
+    `- 时间：${stamp(now, true)}`,
+    `- 消息数：${chat.messages.length}`
+  ]
+  if (chat.positionDescription) lines.push(`- 岗位描述：${chat.positionDescription.replace(/\n/g, ' ')}`)
+  lines.push('', '---', '')
   for (const m of chat.messages) {
-    // 带教练标记的消息显示为"教练提示"
-    const speaker = m.channel === 'coach' ? (m.role === 'user' ? '向教练提问' : '教练提示') : messageRoleMap[m.role] || m.role
-    lines.push(`### ${speaker}`)
-    lines.push(m.content || '')
-    lines.push('')
+    const speaker = m.channel === 'coach'
+      ? (m.role === 'user' ? '向教练提问' : '教练提示')
+      : (m.role === 'user' ? '我' : '面试官')
+    lines.push(`### ${speaker}`, m.content || '', '')
   }
-  const md = lines.join('\n')
-  const blob = new Blob([md], { type: 'text/markdown' })
-  const url = URL.createObjectURL(blob)
+  const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/markdown' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = `面试记录_${makeTimestamp()}.md`
+  a.download = `面试记录_${stamp(now)}.md`
   document.body.appendChild(a)
   a.click()
-  document.body.removeChild(a)
+  a.remove()
   URL.revokeObjectURL(url)
+  toast.success('面试记录已导出')
 }
 
-// ============ 语音输入(Web Speech API,大陆需翻墙) ============
-// 持续监听模式:用户可以一直说,说完后再点击按钮停止
-const recognizing = ref(false)
-const speechSupported = ref(false)
-const speechError = ref('') // 语音识别错误提示
-let recognition = null
-
-if (typeof window !== 'undefined') {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-  if (SR) {
-    speechSupported.value = true
-    recognition = new SR()
-    recognition.lang = 'zh-CN'
-    recognition.continuous = true // 持续监听模式,需手动停止
-    recognition.interimResults = true
-    recognition.onresult = (e) => {
-      let text = ''
-      // 持续模式下可能有多段结果,拼接起来
-      for (let i = 0; i < e.results.length; i++) {
-        text += e.results[i][0].transcript
-      }
-      input.value = text
-    }
-    recognition.onend = () => { recognizing.value = false }
-    recognition.onerror = (e) => {
-      recognizing.value = false
-      if (e.error === 'no-speech' || e.error === 'aborted') return
-      // network: 大陆无法访问 Google 语音服务
-      if (e.error === 'network') {
-        speechError.value = '语音识别服务不可用(需联网访问 Google 服务),请使用文字输入,或开启 VPN 后重试'
-      } else if (e.error === 'not-allowed') {
-        speechError.value = '麦克风权限被拒绝,请在浏览器设置中允许'
-      } else if (e.error === 'service-not-allowed') {
-        speechError.value = '语音识别服务不可用,请使用 Chrome/Edge 浏览器'
-      } else {
-        speechError.value = '语音输入暂不可用，仍可打字回答。'
-      }
-      // 5 秒后自动清除提示
-      setTimeout(() => { speechError.value = '' }, 5000)
-    }
-  }
-}
+// ============ 语音输入 / 系统音频 ============
+const voice = useVoiceInput((text) => {
+  input.value = text
+  autoGrow()
+})
+const audio = useSystemAudio()
 
 function toggleVoice() {
-  if (!recognition) return
-  speechError.value = ''
-  if (recognizing.value) {
-    recognition.stop()
-    recognizing.value = false
-  } else {
-    input.value = ''
-    try {
-      recognition.start()
-      recognizing.value = true
-    } catch (e) {
-      recognizing.value = false
-      speechError.value = '无法启动语音识别,请检查浏览器兼容性'
-      setTimeout(() => { speechError.value = '' }, 5000)
-    }
-  }
+  voice.toggle(input.value.trim())
 }
 
-// ============ 系统音频捕获(听面试官说话,如腾讯会议) ============
-// 用 AudioWorklet 在音频线程采集 PCM,主线程定时切片并行上传 ASR
-// 实现真正的边录边识别边显示,字幕持续追加
-const listening = ref(false)        // 是否正在监听系统音频
-const asrText = ref('')             // 累计识别的文字
-const asrError = ref('')            // ASR 错误提示
-const asrBusy = ref(false)          // 正在识别中(并行时可能多段)
-let pendingCount = 0                // 当前并行识别中的段数
-let displayStream = null             // getDisplayMedia 的流
-let audioContext = null              // AudioContext 实例
-let mediaSource = null               // MediaStreamSource 节点
-let workletNode = null               // AudioWorkletNode 节点
-let captureTimer = null             // 切片定时器
-const CAPTURE_INTERVAL = 3000       // 切片时长(ms),3秒一段
-const SAMPLE_RATE = 16000           // whisper 推荐采样率
-const CHANNELS = 1                 // 单声道
-
-async function toggleListen() {
-  if (listening.value) {
-    stopListening()
-  } else {
-    await startListening()
-  }
-}
-
-async function startListening() {
-  asrError.value = ''
-  asrText.value = ''
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-    asrError.value = '当前浏览器不支持系统音频捕获,请使用 Chrome/Edge'
-    setTimeout(() => { asrError.value = '' }, 5000)
-    return
-  }
-  if (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined') {
-    asrError.value = '当前浏览器不支持 AudioContext,请升级浏览器'
-    setTimeout(() => { asrError.value = '' }, 5000)
-    return
-  }
-
-  try {
-    // 必须请求 video:true,浏览器才会弹共享选择框
-    displayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    })
-  } catch (e) {
-    if (e.name === 'NotAllowedError') {
-      asrError.value = '已取消屏幕共享,请重新点击并选择"共享系统音频"'
-    } else if (e.name === 'NotReadableError') {
-      asrError.value = '屏幕捕获被占用:请先停止腾讯会议/OBS 等的屏幕共享,再点 🔈 重试'
-    } else {
-      asrError.value = `无法获取屏幕共享(${e.name}):${e.message}`
-    }
-    setTimeout(() => { asrError.value = '' }, 8000)
-    return
-  }
-
-  const audioTracks = displayStream.getAudioTracks()
-  if (audioTracks.length === 0) {
-    asrError.value = '未检测到系统音频,请在共享弹窗里勾选"共享系统音频"复选框'
-    setTimeout(() => { asrError.value = '' }, 6000)
-    stopDisplayStream()
-    return
-  }
-
-  // 用户通过浏览器 UI 停止共享时,自动关闭监听
-  audioTracks[0].addEventListener('ended', () => stopListening())
-
-  // 立即停掉视频轨道,只保留音频(省资源)
-  displayStream.getVideoTracks().forEach((t) => t.stop())
-
-  // 创建 AudioContext,采样率设为 16kHz(whisper 最佳采样率)
-  const AudioCtx = AudioContext || webkitAudioContext
-  audioContext = new AudioCtx({ sampleRate: SAMPLE_RATE })
-
-  // 加载 AudioWorklet 模块
-  try {
-    await audioContext.audioWorklet.addModule(new URL('../worklets/recorder-processor.js', import.meta.url))
-  } catch (e) {
-    asrError.value = '录音暂不可用，仍可打字回答。'
-    setTimeout(() => { asrError.value = '' }, 5000)
-    stopDisplayStream()
-    return
-  }
-
-  // 连接音频流
-  const audioStream = new MediaStream(audioTracks)
-  mediaSource = audioContext.createMediaStreamSource(audioStream)
-  workletNode = new AudioWorkletNode(audioContext, 'recorder-processor', {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    channelCount: CHANNELS,
-  })
-
-  // source → worklet(不连到 destination,避免系统声音被回放出来)
-  mediaSource.connect(workletNode)
-
-  // 监听 worklet 返回的数据
-  workletNode.port.onmessage = async (e) => {
-    const { samples, length } = e.data
-    if (!samples || length === 0) return
-    // 异步处理这一段,不阻塞 worklet
-    processChunk(samples)
-  }
-
-  listening.value = true
-  pendingCount = 0
-
-  // 启动切片定时器:定时向 worklet 要数据
-  captureTimer = setInterval(() => flushFromWorklet(), CAPTURE_INTERVAL)
-}
-
-// 从 worklet 取出当前累积的 PCM 数据
-function flushFromWorklet() {
-  if (!listening.value || !workletNode) return
-  // 向 worklet 发指令,让它把累积的数据返回
-  workletNode.port.postMessage('flush')
-}
-
-// 处理一段 PCM 数据:编码 WAV + 并行上传 ASR + 追加显示
-async function processChunk(samples) {
-  // 检测音量(避免识别静音段浪费时间)
-  let maxSample = 0
-  for (let i = 0; i < samples.length; i++) {
-    const abs = Math.abs(samples[i])
-    if (abs > maxSample) maxSample = abs
-  }
-  if (maxSample < 0.01) return // 静音段跳过
-
-  // 编码 WAV
-  const wavBlob = encodeWav(samples, SAMPLE_RATE, CHANNELS)
-
-  // 并行上传:不阻塞后续切片
-  pendingCount++
-  asrBusy.value = true
-  try {
-    const text = await recognizeASR(wavBlob)
-    if (text) {
-      // 关键:识别到就立即追加显示,不等下一段
-      asrText.value = asrText.value
-        ? asrText.value + text
-        : text
-    }
-  } catch (e) {
-    asrError.value = e.message
-    setTimeout(() => { asrError.value = '' }, 5000)
-  } finally {
-    pendingCount--
-    asrBusy.value = pendingCount > 0
-  }
-}
-
-// 把 Float32Array PCM 编码成 WAV Blob(16-bit PCM)
-function encodeWav(samples, sampleRate, channels) {
-  const bytesPerSample = 2
-  const blockAlign = channels * bytesPerSample
-  const dataSize = samples.length * bytesPerSample
-  const buffer = new ArrayBuffer(44 + dataSize)
-  const view = new DataView(buffer)
-
-  writeString(view, 0, 'RIFF')
-  view.setUint32(4, 36 + dataSize, true)
-  writeString(view, 8, 'WAVE')
-  writeString(view, 12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, channels, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * blockAlign, true)
-  view.setUint16(32, blockAlign, true)
-  view.setUint16(34, bytesPerSample * 8, true)
-  writeString(view, 36, 'data')
-  view.setUint32(40, dataSize, true)
-
-  let offset = 44
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]))
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true)
-    offset += 2
-  }
-
-  return new Blob([buffer], { type: 'audio/wav' })
-}
-
-function writeString(view, offset, str) {
-  for (let i = 0; i < str.length; i++) {
-    view.setUint8(offset + i, str.charCodeAt(i))
-  }
-}
-
-function stopListening() {
-  listening.value = false
-  if (captureTimer) {
-    clearInterval(captureTimer)
-    captureTimer = null
-  }
-  if (workletNode) {
-    try { workletNode.port.postMessage('flush') } catch (e) {}
-    try { workletNode.disconnect() } catch (e) {}
-    workletNode = null
-  }
-  if (mediaSource) {
-    try { mediaSource.disconnect() } catch (e) {}
-    mediaSource = null
-  }
-  if (audioContext) {
-    try { audioContext.close() } catch (e) {}
-    audioContext = null
-  }
-  pendingCount = 0
-  asrBusy.value = false
-  stopDisplayStream()
-}
-
-function stopDisplayStream() {
-  if (displayStream) {
-    displayStream.getTracks().forEach((t) => t.stop())
-    displayStream = null
-  }
-}
-
-// 把识别结果填入输入框,方便用户直接发送
 function useAsrAsInput() {
-  if (!asrText.value) return
-  input.value = asrText.value
-  asrText.value = ''
+  const text = audio.asrText.value.trim()
+  if (!text) return
+  input.value = input.value.trim() ? `${input.value.trim()}\n${text}` : text
+  audio.asrText.value = ''
+  autoGrow()
+  focusInput()
 }
 
-// 清空识别文本
-function clearAsrText() {
-  asrText.value = ''
-}
-
-// 组件卸载时清理资源
-onBeforeUnmount(() => {
-  stopListening()
-  stopAutoTTS()
-})
-
-// ============ 语音输出(自动朗读面试官回复) ============
+// ============ 自动朗读面试官回复（按句入队，边流式边朗读） ============
 const autoTTS = ref(false)
+const ttsBusy = ref(false)
 let autoSpeechController = null
 let spokenLength = 0
 let speakingMessageId = null
 let speechQueue = Promise.resolve()
-const ttsBusy = ref(false)
 
 function stopAutoTTS() {
   autoSpeechController?.abort()
@@ -487,12 +236,10 @@ function queueSpeech(text) {
   ttsBusy.value = true
   speechQueue = speechQueue.then(async () => {
     if (controller?.signal.aborted) return
-    try { await speakText(text, controller.signal) }
-    catch (e) { /* Text remains available in the conversation. */ }
+    try { await speakText(text, controller?.signal) } catch { /* 文字仍保留在对话中 */ }
   }).finally(() => { if (controller === autoSpeechController) ttsBusy.value = false })
 }
 
-// Start reading a completed sentence while the answer is still streaming.
 watch(() => chat.messages.at(-1)?.content || '', (content) => {
   const last = chat.messages.at(-1)
   if (!autoTTS.value || !last || last.role !== 'assistant' || last.channel !== 'interview') return
@@ -501,614 +248,467 @@ watch(() => chat.messages.at(-1)?.content || '', (content) => {
     speakingMessageId = last.message_id
     autoSpeechController = new AbortController()
   }
-  const remaining = content.slice(spokenLength)
-  const complete = remaining.match(/^[\s\S]*?[。！？!?\n]/)
-  if (complete) {
-    spokenLength += complete[0].length
-    queueSpeech(complete[0])
+  let rest = content.slice(spokenLength)
+  let match = rest.match(/^[\s\S]*?[。！？!?\n]/)
+  while (match) {
+    spokenLength += match[0].length
+    queueSpeech(match[0])
+    rest = content.slice(spokenLength)
+    match = rest.match(/^[\s\S]*?[。！？!?\n]/)
   }
 })
 
 watch(() => chat.streaming, (streaming, prev) => {
-  if (prev && !streaming && autoTTS.value) {
-    const last = chat.messages.at(-1)
-    if (last?.role === 'assistant' && last.channel === 'interview') {
-      if (!autoSpeechController) autoSpeechController = new AbortController()
-      queueSpeech(last.content.slice(spokenLength))
-      spokenLength = last.content.length
-    }
+  if (!prev || streaming || !autoTTS.value) return
+  const last = chat.messages.at(-1)
+  if (last?.role === 'assistant' && last.channel === 'interview') {
+    if (!autoSpeechController) autoSpeechController = new AbortController()
+    queueSpeech(last.content.slice(spokenLength))
+    spokenLength = last.content.length
   }
 })
 watch(autoTTS, (on) => { if (!on) stopAutoTTS() })
-// 监听消息变化自动滚动
-watch(
-  () => chat.messages.length,
-  () => scrollToBottom()
-)
-watch(
-  () => chat.messages.map((m) => m.content).join(''),
-  () => {
-    if (chat.streaming) scrollToBottom()
+
+watch(() => chat.messages.length, () => scrollToBottom(true))
+watch(() => chat.messages.at(-1)?.content, () => { if (chat.streaming) scrollToBottom() })
+
+// ============ 生命周期 ============
+function applyRouteQuery() {
+  const { position, role, question } = route.query
+  if (!position && !question) return false
+  if (typeof position === 'string' && position) draft.value.direction = position
+  if (typeof role === 'string' && ROLE_NAMES[role]) draft.value.role = role
+  if (typeof question === 'string' && question) pendingQuestion.value = question.slice(0, 300)
+  router.replace({ path: '/chat' })
+  return true
+}
+
+onMounted(async () => {
+  catalog.load()
+  chat.loadServiceStatus()
+  const fromQuery = applyRouteQuery()
+  if (fromQuery) {
+    // 从题库/首页带参进入：开新面试配置
+    if (inSession.value) {
+      chat.reset()
+    }
+    return
   }
-)
+  if (chat.sessionId) {
+    scrollToBottom(true)
+    return
+  }
+  const ok = await chat.restoreFromLocal()
+  if (ok) {
+    toast.info(`已恢复上次面试（${chat.messages.length} 条消息）`)
+    scrollToBottom(true)
+  }
+})
+
+onBeforeUnmount(() => {
+  stopAutoTTS()
+})
 </script>
 
 <template>
-  <div class="chat-page">
-    <!-- 顶部配置栏 -->
-    <div class="config-bar card">
-      <div class="config-row">
-        <div class="config-group">
-          <span class="config-label">方向</span>
-          <select v-model="chat.direction" class="select" :disabled="chat.hasMessages">
-            <option v-for="d in directions" :key="d.value" :value="d.value">{{ d.label }}</option>
-          </select>
-        </div>
-        <div class="config-group">
-          <span class="config-label">角色</span>
-          <select v-model="chat.role" class="select" :disabled="chat.hasMessages">
-            <option v-for="r in roles" :key="r.value" :value="r.value">{{ r.label }}</option>
-          </select>
-        </div>
-        <button
-          class="btn btn-coach"
-          :class="{ active: chat.coachMode }"
-          @click="chat.toggleCoachMode"
-          :title="'开启后,你的提问将交给教练给出参考答案与思路'"
-        >
-          🎓 {{ chat.coachMode ? '辅导中' : '实时辅导' }}
-        </button>
-        <div class="spacer"></div>
-        <button class="btn btn-ghost" @click="newInterview" :disabled="chat.streaming">
-          ↻ 新面试
-        </button>
-        <button
-          v-if="chat.hasMessages"
-          class="btn btn-ghost"
-          @click="exportChat"
-          :disabled="chat.streaming"
-        >
-          ⬇ 导出对话
-        </button>
-        <button
-          class="btn btn-primary"
-          @click="finishAndEvaluate"
-          :disabled="!chat.hasMessages || chat.streaming || chat.evaluating"
-        >
-          {{ chat.evaluating ? '评估中…' : '结束并评估' }}
-        </button>
-      </div>
-      <div v-if="chat.coachMode" class="coach-tip">
-        <span class="tag tag-coach">辅导模式</span>
-        接下来你输入的内容,教练会直接给出参考答案与思路(不会进入面试对话)
-      </div>
-      <div class="insight-strip">
-        <span class="status-chip" :class="`mode-${chat.runtimeMode}`">服务：{{ modeLabel }}</span>
-        <span class="status-chip" :class="`rag-${chat.rag?.status || 'pending'}`">
-          RAG：{{ ragLabel }}<template v-if="chat.rag?.count">（{{ chat.rag.count }} 条）</template>
-        </span>
-        <span v-if="chat.rag?.sources?.length" class="source-text" :title="chat.rag.sources.join('、')">
-          来源：{{ chat.rag.sources.join('、') }}
-        </span>
-        <span v-if="routeSummary" class="source-text" :title="`实际成本 ${chat.routingMetrics.estimated_cost}，平均延迟 ${chat.routingMetrics.average_latency_ms}ms`">
-          路由：{{ routeSummary }}
-        </span>
-        <span v-if="chat.serviceStatusError" class="status-error">{{ chat.serviceStatusError }}</span>
-      </div>
-      <!-- 刷新后恢复提示 -->
-      <div v-if="restoreTip" class="restore-tip">
-        <span class="restore-icon">↺</span>
-        <span>{{ restoreTip }}</span>
-        <button class="restore-close" @click="restoreTip = ''">×</button>
-      </div>
-    </div>
-
-    <div v-if="chat.profile" class="profile-card card">
-      <div class="profile-head">
+  <!-- ================= 配置向导 ================= -->
+  <div v-if="!inSession" class="setup">
+    <div class="container-narrow">
+      <header class="page-head setup-head">
         <div>
-          <strong>实时能力画像</strong>
-          <span class="profile-count">已分析 {{ chat.profile.answer_count || 0 }} 个回答</span>
+          <span class="eyebrow"><Icon name="sparkles" :size="14" /> AI 模拟面试</span>
+          <h1 class="page-title">配置你的专属面试</h1>
+          <p class="page-sub">选择岗位与轮次，AI 面试官会结合岗位要求、题库与你的简历资料动态追问</p>
         </div>
-        <span class="confidence">置信度：{{ profileConfidence }}</span>
-      </div>
-      <div v-if="profileDimensions.length" class="profile-dimensions">
-        <div v-for="d in profileDimensions" :key="d.name" class="profile-dimension" :title="d.evidence">
-          <div class="profile-dim-head"><span>{{ d.name }}</span><b>{{ d.score.toFixed(0) }}</b></div>
-          <div class="profile-bar"><span :style="{ width: `${d.score}%` }"></span></div>
-          <small>{{ profileTrend(d.score) }}<template v-if="d.evidence"> · {{ d.evidence }}</template></small>
-        </div>
-      </div>
-      <div class="profile-focus">
-        <div v-if="chat.profile.strengths?.length"><b>重点：</b>{{ chat.profile.strengths.join('、') }}</div>
-        <div v-if="chat.profile.gaps?.length" class="profile-gaps"><b>薄弱项：</b>{{ chat.profile.gaps.join('、') }}</div>
-        <div v-if="chat.profile.follow_up_strategy"><b>追问策略：</b>{{ chat.profile.follow_up_strategy }}</div>
-      </div>
-    </div>
+      </header>
 
-    <!-- 消息列表 -->
-    <div ref="scrollEl" class="messages">
-      <div v-if="!chat.hasMessages" class="empty">
-        <div class="empty-icon">🎤</div>
-        <div class="empty-title">准备好了就开始吧</div>
-        <div class="empty-desc">
-          选择面试方向与角色,发送「开始面试」即可。<br />
-          面试中卡壳了,可点「实时辅导」求助教练。
+      <div v-if="pendingQuestion" class="alert alert-info mb-4">
+        <Icon name="bulb" :size="16" class="alert-icon" />
+        <div class="flex-1">
+          <div class="text-sm"><b>已选定开场题：</b>{{ pendingQuestion }}</div>
         </div>
+        <button type="button" class="btn btn-sm btn-ghost" aria-label="移除开场题" @click="pendingQuestion = ''">
+          <Icon name="x" :size="14" />
+        </button>
       </div>
-      <template v-else>
-        <ChatMessage
-          v-for="(m, i) in chat.messages"
-          :key="m.message_id"
-          :role="m.role"
-          :content="m.content"
-          :coach="m.channel === 'coach'"
-          :model="m.model"
-          :route-reason="m.route_reason"
-          :retrieval="m.retrieval"
-          :streaming="chat.streaming && i === chat.messages.length - 1 && m.role === 'assistant'"
+
+      <div class="card setup-card">
+        <PositionPicker
+          v-model:direction="draft.direction"
+          v-model:role="draft.role"
+          v-model:position-description="draft.positionDescription"
         />
-      </template>
-    </div>
+      </div>
 
-    <!-- 输入区 -->
-    <div class="input-bar">
-      <!-- 面试官实时字幕(系统音频识别) -->
-      <div v-if="listening || asrText" class="asr-panel">
-        <div class="asr-header">
-          <span class="asr-title">
-            <span v-if="listening" class="asr-rec-dot" :class="{ busy: asrBusy }"></span>
-            {{ listening ? (asrBusy ? '识别中…' : '正在听面试官说话') : '面试官说的话' }}
-          </span>
-          <div class="asr-actions">
-            <button v-if="asrText" class="asr-btn" @click="useAsrAsInput" title="把识别文字填入输入框">填入</button>
-            <button v-if="asrText" class="asr-btn" @click="clearAsrText" title="清空识别文字">清空</button>
+      <div class="setup-foot">
+        <div class="summary">
+          <template v-if="draft.direction">
+            <span class="text-dim text-sm">即将开始</span>
+            <span class="tag tag-primary"><Icon name="briefcase" :size="12" /> {{ draftName }}</span>
+            <span class="tag"><Icon name="layers" :size="12" /> {{ ROLE_NAMES[draft.role] }}</span>
+          </template>
+          <span v-else class="text-dim text-sm">请先选择或输入一个目标岗位</span>
+        </div>
+        <button type="button" class="btn btn-gradient btn-lg" :disabled="!canStart" @click="startInterview">
+          <span v-if="starting" class="spinner" />
+          <Icon v-else name="play" :size="16" />
+          {{ starting ? '正在准备面试官…' : '开始面试' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 面试中 ================= -->
+  <div v-else class="room" :class="{ 'panel-open': panelOpen }">
+    <section class="main">
+      <header class="topbar">
+        <div class="topbar-info">
+          <div class="title-row">
+            <h1 class="room-title truncate">{{ sessionTitle }}</h1>
+            <span class="tag">{{ roleName }}</span>
+            <span v-if="chat.coachMode" class="tag tag-coach"><Icon name="graduation" :size="12" /> 教练模式</span>
+          </div>
+          <div class="status-row">
+            <span class="status"><span class="dot" :class="modeInfo.dot ? `dot-${modeInfo.dot}` : ''" />{{ modeInfo.text }}</span>
+            <span class="status"><Icon name="database" :size="12" />{{ ragLabel }}</span>
+            <span class="status"><Icon name="message" :size="12" />已作答 {{ chat.answerCount }} 轮</span>
           </div>
         </div>
-        <div class="asr-text" :class="{ empty: !asrText }">{{ asrText || '等待识别结果…' }}</div>
+        <div class="topbar-actions">
+          <button
+            type="button"
+            class="btn btn-sm btn-coach"
+            :class="{ active: chat.coachMode }"
+            :aria-pressed="chat.coachMode"
+            title="教练模式：获取答题思路与参考答案，不计入面试评估"
+            @click="chat.toggleCoachMode()"
+          >
+            <Icon name="graduation" :size="15" /> <span class="hide-sm">教练</span>
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost btn-icon" title="导出 Markdown" aria-label="导出面试记录" :disabled="!chat.messages.length" @click="exportChat">
+            <Icon name="download" :size="16" />
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost btn-icon" title="新面试" aria-label="开始新面试" :disabled="chat.streaming" @click="newInterview">
+            <Icon name="plus" :size="16" />
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost btn-icon" :class="{ active: panelOpen }" title="实时画像" aria-label="切换实时画像面板" @click="panelOpen = !panelOpen">
+            <Icon name="chart" :size="16" />
+          </button>
+          <button type="button" class="btn btn-sm btn-primary" :disabled="!chat.hasMessages || chat.evaluating || chat.streaming" @click="finishAndEvaluate">
+            <span v-if="chat.evaluating" class="spinner" />
+            <Icon v-else name="flag" :size="15" />
+            <span class="hide-sm">{{ chat.evaluating ? '生成报告中…' : '结束并评估' }}</span>
+          </button>
+        </div>
+      </header>
+
+      <div ref="scrollEl" class="messages" aria-live="polite">
+        <div class="messages-inner">
+          <div v-if="chat.restored" class="restored-tip">
+            <Icon name="history" :size="13" /> 已从面试记录恢复，可继续作答
+          </div>
+          <ChatMessage
+            v-for="m in chat.messages"
+            :key="m.message_id"
+            :role="m.role"
+            :content="m.content"
+            :coach="m.channel === 'coach'"
+            :model="m.model"
+            :route-reason="m.route_reason"
+            :retrieval="m.retrieval"
+            :fallback="m.fallback"
+            :streaming="chat.streaming && m === chat.messages.at(-1)"
+          />
+        </div>
       </div>
-      <div class="input-wrap">
-        <textarea
-          v-model="input"
-          class="textarea"
-          :placeholder="chat.coachMode ? '向教练提问,获取参考答案…' : '输入你的回答 / 发送「开始面试」'"
-          rows="1"
-          @keydown="onKeydown"
-          :disabled="chat.streaming"
-        ></textarea>
-        <button
-          class="btn voice-btn listen-btn"
-          :class="{ recording: listening }"
-          @click="toggleListen"
-          :disabled="chat.streaming"
-          :title="listening ? '点击停止监听' : '听面试官说话(捕获系统音频)'"
-        >
-          <span v-if="listening" class="voice-dot"></span>
-          <span v-else class="voice-icon">🔈</span>
-        </button>
-        <button
-          v-if="speechSupported"
-          class="btn voice-btn"
-          :class="{ recording: recognizing }"
-          @click="toggleVoice"
-          :disabled="chat.streaming"
-          :title="recognizing ? '点击停止识别' : '语音输入'"
-        >
-          <span v-if="recognizing" class="voice-dot"></span>
-          <span v-else class="voice-icon">🎤</span>
-        </button>
-        <button class="btn btn-primary send-btn" @click="handleSend" :disabled="!canSend">
-          {{ chat.streaming ? '…' : '发送' }}
+
+      <footer class="composer-wrap">
+        <!-- 系统音频字幕 -->
+        <transition name="fade">
+          <div v-if="audio.listening.value || audio.asrText.value" class="asr-panel">
+            <div class="asr-head">
+              <span class="row gap-2 text-xs">
+                <span class="dot" :class="audio.listening.value ? 'dot-danger dot-pulse' : ''" />
+                {{ audio.listening.value ? '正在识别面试官声音' : '识别已暂停' }}
+                <span v-if="audio.asrBusy.value" class="spinner spinner-xs" />
+              </span>
+              <span class="row gap-1 ml-auto">
+                <button type="button" class="btn btn-sm btn-ghost" :disabled="!audio.asrText.value" @click="useAsrAsInput">
+                  <Icon name="arrowUp" :size="13" /> 填入输入框
+                </button>
+                <button type="button" class="btn btn-sm btn-ghost" :disabled="!audio.asrText.value" @click="audio.asrText.value = ''">
+                  清空
+                </button>
+              </span>
+            </div>
+            <div class="asr-text" :class="{ placeholder: !audio.asrText.value }">
+              {{ audio.asrText.value || '等待识别结果…' }}
+            </div>
+          </div>
+        </transition>
+
+        <div class="quick">
+          <button v-for="q in quickPrompts" :key="q" type="button" class="chip chip-sm" :disabled="chat.streaming" @click="handleSend(q)">
+            {{ q }}
+          </button>
+        </div>
+
+        <div class="composer" :class="{ coach: chat.coachMode, focusable: true }">
+          <textarea
+            ref="inputEl"
+            v-model="input"
+            class="composer-input"
+            rows="1"
+            :placeholder="chat.coachMode ? '向 AI 教练提问，获取答题思路或参考答案…' : '输入你的回答，Enter 发送，Shift + Enter 换行'"
+            aria-label="输入回答"
+            @keydown="onKeydown"
+            @input="autoGrow"
+          />
+          <div class="composer-bar">
+            <div class="row gap-1">
+              <button
+                v-if="voice.supported"
+                type="button"
+                class="tool"
+                :class="{ on: voice.recognizing.value }"
+                :title="voice.recognizing.value ? '停止语音输入' : '语音输入'"
+                :aria-pressed="voice.recognizing.value"
+                @click="toggleVoice"
+              >
+                <Icon :name="voice.recognizing.value ? 'micOff' : 'mic'" :size="17" />
+              </button>
+              <button
+                type="button"
+                class="tool"
+                :class="{ on: audio.listening.value }"
+                :title="audio.listening.value ? '停止监听系统音频' : '监听会议软件中的面试官声音'"
+                :aria-pressed="audio.listening.value"
+                @click="audio.toggle()"
+              >
+                <Icon name="monitor" :size="17" />
+              </button>
+              <span class="sep" />
+              <button type="button" class="tool-switch" :aria-pressed="autoTTS" title="自动朗读面试官回复" @click="autoTTS = !autoTTS">
+                <span class="switch" :class="{ on: autoTTS }" />
+                <span class="text-xs">朗读</span>
+                <Icon v-if="ttsBusy" name="volume" :size="14" class="text-primary" />
+              </button>
+            </div>
+            <div class="row gap-2">
+              <span class="text-xs text-dim hide-sm">{{ input.length ? `${input.length} 字` : '' }}</span>
+              <button type="button" class="send" :disabled="!canSend" aria-label="发送" @click="handleSend()">
+                <span v-if="chat.streaming" class="spinner spinner-xs" />
+                <Icon v-else name="send" :size="16" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </section>
+
+    <!-- 实时画像 -->
+    <transition name="fade">
+      <div v-if="panelOpen" class="panel-mask" @click="panelOpen = false" />
+    </transition>
+    <aside v-if="panelOpen" class="panel" aria-label="实时能力画像">
+      <div class="panel-head">
+        <span class="section-title"><Icon name="target" :size="16" /> 实时能力画像</span>
+        <button type="button" class="btn btn-sm btn-ghost btn-icon" aria-label="关闭面板" @click="panelOpen = false">
+          <Icon name="x" :size="15" />
         </button>
       </div>
-      <div class="input-hint text-soft">
-        <span v-if="asrError" class="voice-error">{{ asrError }}</span>
-        <span v-if="speechError" class="voice-error">{{ speechError }}</span>
-        <span v-if="chat.currentModel" class="cur-model">当前模型:{{ chat.currentModel }}</span>
-        <label v-if="speechSupported" class="auto-tts-toggle">
-          <input type="checkbox" v-model="autoTTS" />
-          <span>自动朗读面试官回复</span>
-        </label>
-        <span v-else-if="!speechSupported" class="tts-warn">当前浏览器不支持语音输入,请使用 Chrome/Edge</span>
-        <span>Enter 发送 · Shift+Enter 换行</span>
+
+      <div v-if="!chat.profile" class="empty panel-empty">
+        <div class="empty-icon"><Icon name="chart" :size="22" /></div>
+        <div class="empty-title">画像生成中</div>
+        <div class="empty-desc">完成 1–2 轮作答后，这里会实时展示各维度表现与面试官的追问策略</div>
       </div>
-    </div>
+
+      <div v-else class="panel-body">
+        <div class="kpis">
+          <div class="kpi">
+            <span class="stat-label">已分析作答</span>
+            <span class="kpi-value">{{ chat.profile.answer_count ?? chat.answerCount }}</span>
+          </div>
+          <div class="kpi">
+            <span class="stat-label">画像置信度</span>
+            <span class="kpi-value">{{ profileConfidence ?? '—' }}<small v-if="profileConfidence !== null">%</small></span>
+          </div>
+        </div>
+
+        <div v-if="profileDimensions.length" class="dims">
+          <div v-for="d in profileDimensions" :key="d.name" class="dim">
+            <div class="dim-head">
+              <span class="dim-name">{{ d.name }}</span>
+              <span class="tag" :class="`tag-${scoreTone(d.score).cls}`">{{ scoreTone(d.score).text }}</span>
+              <span class="dim-score">{{ d.score }}</span>
+            </div>
+            <div class="progress"><span :style="{ width: `${Math.min(100, d.score)}%`, background: `var(--${scoreTone(d.score).cls})` }" /></div>
+            <p v-if="d.evidence" class="dim-evidence clamp-2" :title="d.evidence">{{ d.evidence }}</p>
+          </div>
+        </div>
+
+        <div v-if="chat.profile.strengths?.length" class="block">
+          <div class="block-title text-success"><Icon name="checkCircle" :size="14" /> 亮点</div>
+          <ul><li v-for="s in chat.profile.strengths" :key="s">{{ s }}</li></ul>
+        </div>
+        <div v-if="chat.profile.gaps?.length" class="block">
+          <div class="block-title text-warning"><Icon name="alert" :size="14" /> 待加强</div>
+          <ul><li v-for="g in chat.profile.gaps" :key="g">{{ g }}</li></ul>
+        </div>
+        <div v-if="chat.profile.follow_up_strategy" class="block strategy">
+          <div class="block-title text-primary"><Icon name="route" :size="14" /> 面试官追问策略</div>
+          <p>{{ chat.profile.follow_up_strategy }}</p>
+        </div>
+      </div>
+
+      <div class="panel-foot">
+        <div class="tip">
+          <Icon name="bulb" :size="14" />
+          <span>卡壳时打开「教练」获取思路，教练对话不计入评估。</span>
+        </div>
+      </div>
+    </aside>
   </div>
 </template>
 
 <style scoped>
-.chat-page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  max-width: 980px;
-  margin: 0 auto;
-  width: 100%;
+/* ---------- 配置向导 ---------- */
+.setup { padding: 32px 32px 48px; height: 100%; overflow-y: auto; }
+@media (max-width: 768px) { .setup { padding: 18px 16px 28px; } }
+.setup-head { margin-bottom: 20px; }
+.setup-card { padding: 24px; }
+.setup-foot {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-top: 16px; padding: 14px 18px;
+  border-radius: var(--radius-lg); border: 1px solid var(--border);
+  background: var(--bg-glass); backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-card);
 }
-.config-bar {
-  margin-bottom: 16px;
-  padding: 14px 18px;
+.summary { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+
+/* ---------- 面试室布局 ---------- */
+.room { height: 100%; min-height: 0; display: flex; position: relative; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 24px; border-bottom: 1px solid var(--border);
+  background: var(--bg-glass); backdrop-filter: blur(12px);
 }
-.config-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.config-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.config-label {
-  font-size: 13px;
-  color: var(--text-soft);
-}
-.select {
-  padding: 8px 12px;
-  font-size: 14px;
-}
-.spacer {
-  flex: 1;
-}
-.coach-tip {
-  margin-top: 10px;
-  font-size: 13px;
-  color: var(--text-soft);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.insight-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-.status-chip {
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  color: var(--text-soft);
-}
-.mode-normal, .mode-ok, .rag-used { color: var(--success); border-color: rgba(52, 211, 153, .35); }
-.mode-degraded, .rag-empty, .rag-unconfigured { color: var(--warning); border-color: rgba(245, 158, 11, .35); }
-.mode-demo { color: var(--danger); border-color: rgba(239, 68, 68, .35); }
-.source-text { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
-.status-error { color: var(--danger); }
-.profile-card { margin-bottom: 12px; padding: 14px 18px; }
-.profile-head, .profile-dim-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.profile-count, .confidence { margin-left: 10px; color: var(--text-soft); font-size: 12px; }
-.profile-dimensions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
-.profile-dimension { min-width: 0; font-size: 13px; }
-.profile-dimension small { display: block; margin-top: 4px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-bar { height: 5px; margin-top: 5px; border-radius: 3px; overflow: hidden; background: var(--bg-hover); }
-.profile-bar span { display: block; height: 100%; background: var(--gradient-primary); }
-.profile-focus { display: grid; gap: 5px; margin-top: 12px; font-size: 12px; color: var(--text-soft); }
-.profile-gaps { color: var(--warning); }
-.restore-tip {
-  margin-top: 10px;
-  padding: 8px 14px;
-  background: rgba(52, 211, 153, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  border-radius: var(--radius-sm);
-  color: #6ee7b7;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  animation: fadeInUp 0.3s ease;
-}
-.restore-icon {
-  font-size: 16px;
-  font-weight: 700;
-}
-.restore-tip span:nth-child(2) {
-  flex: 1;
-}
-.restore-close {
-  background: none;
-  border: none;
-  color: inherit;
-  font-size: 18px;
-  line-height: 1;
-  padding: 0 4px;
-  opacity: 0.6;
-  cursor: pointer;
-}
-.restore-close:hover {
-  opacity: 1;
+.topbar-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.room-title { margin: 0; font-size: 16px; font-weight: 650; }
+.status-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.btn-icon.active { color: var(--primary); background: var(--primary-bg); }
+
+.messages { flex: 1; overflow-y: auto; min-height: 0; scroll-behavior: smooth; }
+.messages-inner { max-width: 860px; margin: 0 auto; padding: 24px 24px 12px; display: flex; flex-direction: column; gap: 18px; }
+.restored-tip {
+  align-self: center; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-dim); padding: 4px 12px;
+  border-radius: var(--radius-pill); background: var(--bg-soft); border: 1px solid var(--border);
 }
 
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0 16px;
-}
-.empty {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-soft);
-  text-align: center;
-}
-.empty-icon {
-  font-size: 56px;
-  margin-bottom: 16px;
-  opacity: 0.7;
-}
-.empty-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 8px;
-}
-.empty-desc {
-  font-size: 14px;
-  line-height: 1.8;
-}
+/* ---------- 输入区 ---------- */
+.composer-wrap { padding: 8px 24px 20px; }
+.composer-wrap > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+.quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.chip-sm { padding: 4px 10px; font-size: 12px; }
+.chip:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.input-bar {
-  border-top: 1px solid var(--border);
-  padding: 14px 0 4px;
+.composer {
+  border-radius: var(--radius-lg); border: 1px solid var(--border-strong);
+  background: var(--bg-input); box-shadow: var(--shadow-soft);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.input-wrap {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
+.composer:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
+.composer.coach { border-color: color-mix(in srgb, var(--coach) 50%, var(--border)); }
+.composer.coach:focus-within { border-color: var(--coach); box-shadow: 0 0 0 3px color-mix(in srgb, var(--coach) 20%, transparent); }
+.composer-input {
+  display: block; width: 100%; resize: none; border: 0; outline: none; background: transparent;
+  color: var(--text); font: inherit; font-size: 14.5px; line-height: 1.6;
+  padding: 14px 16px 6px; max-height: 180px;
 }
-.textarea {
-  flex: 1;
-  min-height: 44px;
-  max-height: 140px;
-  padding: 12px 14px;
+.composer-input::placeholder { color: var(--text-dim); }
+.composer-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px 10px 10px; }
+.tool {
+  width: 34px; height: 34px; border-radius: var(--radius-sm); display: grid; place-items: center;
+  color: var(--text-soft); transition: background var(--dur), color var(--dur);
 }
-.voice-btn {
-  height: 44px;
-  width: 44px;
-  flex-shrink: 0;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 18px;
+.tool:hover { background: var(--bg-hover); color: var(--text); }
+.tool.on { background: var(--danger-bg); color: var(--danger); }
+.tool:focus-visible, .tool-switch:focus-visible, .send:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sep { width: 1px; height: 18px; background: var(--border); margin: 0 6px; }
+.tool-switch { display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); padding: 4px 6px; border-radius: var(--radius-sm); }
+.tool-switch:hover { background: var(--bg-hover); }
+.send {
+  width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--gradient-primary); color: var(--text-on-primary);
+  box-shadow: var(--shadow-glow); transition: transform var(--dur) var(--ease), opacity var(--dur);
 }
-.voice-btn:hover:not(:disabled) {
-  border-color: rgba(99, 102, 241, 0.4);
-  background: rgba(99, 102, 241, 0.1);
-}
-.voice-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.voice-btn.recording {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.5);
-  animation: voicePulse 1.4s ease-in-out infinite;
-}
-.voice-icon {
-  font-size: 18px;
-  line-height: 1;
-}
-.voice-dot {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-  animation: dotPulse 1.4s ease-in-out infinite;
-}
-@keyframes voicePulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
-  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
-}
-@keyframes dotPulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.3); opacity: 0.7; }
-}
-.send-btn {
-  height: 44px;
-  flex-shrink: 0;
-}
-.input-hint {
-  font-size: 12px;
-  margin-top: 6px;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.cur-model {
-  color: var(--primary);
-  font-weight: 500;
-}
-.auto-tts-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  color: var(--text-soft);
-  user-select: none;
-}
-.auto-tts-toggle input {
-  margin: 0;
-  cursor: pointer;
-  accent-color: var(--primary);
-}
-.tts-warn {
-  color: var(--warning, #f59e0b);
-}
-.voice-error {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.12);
-  padding: 3px 10px;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  font-size: 12px;
-}
+.send:hover:not(:disabled) { transform: translateY(-1px); }
+.send:disabled { opacity: 0.4; box-shadow: none; cursor: not-allowed; }
+.spinner-xs { width: 14px; height: 14px; border-width: 2px; }
 
-/* ============ 系统音频识别字幕面板 ============ */
 .asr-panel {
-  margin-bottom: 10px;
-  background: rgba(99, 102, 241, 0.08);
-  border: 1px solid rgba(99, 102, 241, 0.25);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  animation: fadeInUp 0.25s ease;
+  margin-bottom: 10px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--bg-soft); overflow: hidden;
 }
-.asr-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px 4px;
+.asr-head { display: flex; align-items: center; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--border); color: var(--text-soft); }
+.asr-text { padding: 10px 12px; font-size: 13.5px; line-height: 1.6; max-height: 96px; overflow-y: auto; white-space: pre-wrap; }
+.asr-text.placeholder { color: var(--text-dim); }
+
+/* ---------- 实时画像 ---------- */
+.panel {
+  width: 320px; flex: none; display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--border); background: var(--bg-soft);
 }
-.asr-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-soft);
-  font-weight: 500;
+.panel-mask { display: none; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 12px; }
+.panel-body { flex: 1; overflow-y: auto; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+.panel-empty { flex: 1; padding: 32px 20px; }
+.kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.kpi { padding: 12px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
+.kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi-value small { font-size: 13px; font-weight: 600; color: var(--text-dim); margin-left: 2px; }
+.dims { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border); }
+.dim { display: flex; flex-direction: column; gap: 6px; }
+.dim-head { display: flex; align-items: center; gap: 6px; }
+.dim-name { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; }
+.dim-head .tag { padding: 0 6px; font-size: 11px; }
+.dim-score { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; width: 26px; text-align: right; }
+.dim-evidence { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.block { padding: 12px 14px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border); }
+.block-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.block ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.block li, .block p { font-size: 12.5px; line-height: 1.6; color: var(--text-soft); margin: 0; }
+.strategy { background: var(--primary-bg); border-color: var(--primary-border); }
+.panel-foot { padding: 12px 16px 16px; border-top: 1px solid var(--border); }
+.tip { display: flex; gap: 8px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.tip :deep(svg) { flex: none; margin-top: 2px; color: var(--warning); }
+
+@media (max-width: 1100px) {
+  .panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 301;
+    width: min(360px, 92vw); box-shadow: var(--shadow); background: var(--bg-elevated);
+    animation: slideIn 0.24s var(--ease);
+  }
+  .panel-mask { display: block; position: fixed; inset: 0; z-index: 300; background: var(--overlay); }
 }
-.asr-rec-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-  animation: dotPulse 1.4s ease-in-out infinite;
-}
-.asr-rec-dot.busy {
-  background: #f59e0b;
-  animation: dotPulse 0.8s ease-in-out infinite;
-}
-.asr-actions {
-  display: flex;
-  gap: 6px;
-}
-.asr-btn {
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  color: var(--primary, #818cf8);
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-.asr-btn:hover {
-  background: rgba(99, 102, 241, 0.22);
-  border-color: rgba(99, 102, 241, 0.5);
-}
-.asr-text {
-  padding: 0 12px 10px;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text);
-  max-height: 120px;
-  overflow-y: auto;
-  word-break: break-word;
-}
-.asr-text.empty {
-  color: var(--text-soft);
-  font-style: italic;
-  opacity: 0.7;
-}
-/* 听面试官说话按钮 - 用蓝色区分于麦克风语音输入 */
-.listen-btn.recording {
-  background: rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.5);
-  animation: voicePulse 1.4s ease-in-out infinite;
-}
-.listen-btn .voice-dot {
-  background: #818cf8;
-  box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7);
-}
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }
 
 @media (max-width: 768px) {
-  .config-bar {
-    padding: 12px 14px;
-    margin-bottom: 12px;
-  }
-  .config-row {
-    gap: 8px;
-  }
-  .select {
-    padding: 9px 10px;
-    font-size: 13px;
-    flex: 1;
-    min-width: 0;
-  }
-  .config-group {
-    flex: 1;
-    min-width: 0;
-  }
-  .btn {
-    padding: 9px 14px;
-    font-size: 13px;
-  }
-  .config-label {
-    display: none;
-  }
-  .profile-dimensions {
-    grid-template-columns: 1fr;
-  }
-  .profile-head {
-    align-items: flex-start;
-  }
-  .confidence {
-    margin-left: 0;
-    white-space: nowrap;
-  }
-  .source-text {
-    max-width: 100%;
-  }
-  .spacer {
-    display: none;
-  }
-  /* 输入区提示:仅保留自动朗读开关,其它提示隐藏以节省空间 */
-  .input-hint {
-    justify-content: flex-start;
-  }
-  .input-hint .cur-model,
-  .input-hint > span:last-child {
-    display: none;
-  }
-  .input-hint .auto-tts-toggle {
-    font-size: 12px;
-  }
-  /* 触摸目标更大,避免误触 */
-  .voice-btn,
-  .send-btn {
-    height: 46px;
-  }
-  .voice-btn {
-    width: 46px;
-  }
-  .textarea {
-    min-height: 46px;
-  }
-}
-
-@media (max-width: 380px) {
-  /* 极窄屏:进一步压缩按钮文字 */
-  .btn {
-    padding: 8px 10px;
-    font-size: 12px;
-  }
-  .config-row {
-    gap: 6px;
-  }
+  .setup { padding: 16px 14px 32px; }
+  .setup-card { padding: 16px; }
+  .topbar { padding: 10px 14px; gap: 10px; }
+  .status-row { display: none; }
+  .hide-sm { display: none; }
+  .messages-inner { padding: 16px 14px 8px; }
+  .composer-wrap { padding: 6px 12px 12px; }
+  .setup-foot .btn { width: 100%; justify-content: center; }
 }
 </style>

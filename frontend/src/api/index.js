@@ -16,8 +16,65 @@ async function request(url, options = {}) {
 }
 
 // ============ 面试会话 ============
-export function createSession(direction, role) {
-  return request(`${BASE}/interview/sessions?direction=${direction}&role=${role}`, { method: 'POST' })
+export function createSession(direction, role, positionDescription = '') {
+  const query = new URLSearchParams({ direction, role })
+  if (positionDescription) query.set('position_description', positionDescription.slice(0, 600))
+  return request(`${BASE}/interview/sessions?${query}`, { method: 'POST' })
+}
+
+export function deleteSession(sessionId) {
+  return request(`${BASE}/interview/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+}
+
+// ============ 岗位目录 ============
+export function listPositions(category = null, keyword = '') {
+  const query = new URLSearchParams()
+  if (category) query.set('category', category)
+  if (keyword) query.set('keyword', keyword)
+  const qs = query.toString()
+  return request(`${BASE}/positions${qs ? `?${qs}` : ''}`)
+}
+
+export function getPosition(id) {
+  return request(`${BASE}/positions/${encodeURIComponent(id)}`)
+}
+
+// ============ 面试题库 ============
+function toQuery(params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== null && v !== undefined && v !== '' && v !== false) query.set(k, String(v))
+  })
+  const qs = query.toString()
+  return qs ? `?${qs}` : ''
+}
+
+export function listQuestions(params = {}) {
+  return request(`${BASE}/questions${toQuery(params)}`)
+}
+
+export function getQuestionsMeta() {
+  return request(`${BASE}/questions/meta`)
+}
+
+export function randomQuestions(params = {}) {
+  return request(`${BASE}/questions/random${toQuery(params)}`)
+}
+
+export function getQuestion(id) {
+  return request(`${BASE}/questions/${encodeURIComponent(id)}`)
+}
+
+export function setFavorite(id, favorite) {
+  return request(`${BASE}/questions/${encodeURIComponent(id)}/favorite`, { method: 'PUT', body: JSON.stringify({ favorite }) })
+}
+
+export function addPractice(id, { answer, self_rating = null }) {
+  return request(`${BASE}/questions/${encodeURIComponent(id)}/practices`, { method: 'POST', body: JSON.stringify({ answer, self_rating }) })
+}
+
+export function listPractices(limit = 50) {
+  return request(`${BASE}/questions/practices?limit=${limit}`)
 }
 
 export function listSessions() {

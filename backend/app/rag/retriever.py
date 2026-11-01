@@ -21,8 +21,11 @@ def retrieve_context(query: str, session_id: str | None = None, top_k: int = 4, 
     if not session_id:
         return [], retrieval_meta("empty")
     try:
+        bindings = session_store.get_bindings(session_id)
+        if not any(bindings) and not session_store.list_documents(session_id):
+            return [], retrieval_meta("empty")
         docs = vector_store.search(query, session_id=session_id, top_k=top_k, document_types=document_types,
-                                   document_ids=session_store.get_bindings(session_id))
+                                   document_ids=bindings)
         meta = retrieval_meta(("keyword" if any(d.metadata.get("retrieval_method") == "keyword" for d in docs) else "used") if docs else "empty", docs)
         meta["evidence"] = [c.model_dump(mode="json") for c in citations_from_docs(docs)]
         return docs, meta

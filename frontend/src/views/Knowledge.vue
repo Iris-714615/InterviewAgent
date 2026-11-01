@@ -1,23 +1,77 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useKnowledgeStore } from '../stores/knowledge'
 import { useChatStore } from '../stores/chat'
+import { toast } from '../utils/toast'
+import Icon from '../components/Icon.vue'
 
+const router = useRouter()
 const kb = useKnowledgeStore()
 const chat = useChatStore()
-const documentType = ref('other')
+
+const DOC_TYPES = [
+  { id: 'resume', name: '简历', icon: 'user', desc: '让面试官围绕真实经历深挖' },
+  { id: 'job_description', name: '岗位 JD', icon: 'briefcase', desc: '对齐岗位要求与考察重点' },
+  { id: 'company', name: '企业介绍', icon: 'layers', desc: '业务背景与公司文化' },
+  { id: 'candidate', name: '候选人资料', icon: 'fileText', desc: '作品集、项目复盘等' },
+  { id: 'other', name: '其他', icon: 'file', desc: '面经、笔记、学习资料' }
+]
+const DOC_NAMES = Object.fromEntries(DOC_TYPES.map((d) => [d.id, d.name]))
+const ACCEPT = ['pdf', 'docx', 'doc', 'txt', 'md']
+const MAX_MB = 20
+
+const documentType = ref('resume')
 const redact = ref(true)
 const retentionDays = ref(30)
-const profileLoading = ref(false)
-const privacyLoading = ref(false)
-const sessionId = computed(() => chat.sessionId)
-const query = ref('')
 const dragOver = ref(false)
+const fileInput = ref(null)
 
-// 已上传文件列表
 const files = ref([])
 const loadingFiles = ref(false)
-const deletingSource = ref('')
+const deletingId = ref('')
+const typeFilter = ref('all')
+
+const query = ref('')
+const searched = ref(false)
+const profileLoading = ref(false)
+const privacyLoading = ref(false)
+const retentionSaving = ref(false)
+
+const sessionId = computed(() => chat.sessionId)
+const totalChunks = computed(() => files.value.reduce((s, f) => s + (f.chunks || 0), 0))
+const typeCounts = computed(() => files.value.reduce((acc, f) => {
+  acc[f.document_type] = (acc[f.document_type] || 0) + 1
+  return acc
+}, {}))
+const visibleFiles = computed(() => typeFilter.value === 'all' ? files.value : files.value.filter((f) => f.document_type === typeFilter.value))
+const hasResume = computed(() => Boolean(typeCounts.value.resume))
+const hasJD = computed(() => Boolean(typeCounts.value.job_description))
+const readiness = computed(() => {
+  let score = 0
+  if (hasResume.value) score += 50
+  if (hasJD.value) score += 35
+  if (typeCounts.value.company) score += 15
+  return score
+})
+
+function fileIcon(name) {
+  const ext = (name || '').split('.').pop().toLowerCase()
+  if (ext === 'pdf') return 'fileText'
+  if (ext === 'md') return 'hash'
+  return 'file'
+}
+function formatDate(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+function daysLeft(iso) {
+  if (!iso) return null
+  const diff = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
+  return Number.isFinite(diff) ? Math.max(0, diff) : null
+}
 
 async function loadFiles() {
   loadingFiles.value = true
@@ -25,357 +79,422 @@ async function loadFiles() {
     files.value = await kb.loadFiles(sessionId.value)
   } catch (e) {
     files.value = []
+    toast(e.message || '文件列表加载失败', 'danger')
   } finally {
     loadingFiles.value = false
   }
 }
 
-async function onFileChange(e) {
-  const files = e.target.files
-  if (!files.length) return
-  await kb.upload(files[0], { documentType: documentType.value, sessionId: sessionId.value, retentionDays: retentionDays.value, redact: redact.value })
-  e.target.value = ''
-  // 上传后刷新文件列表
-  if (kb.uploadResult) await loadFiles()
+async function loadSessionExtras() {
+  if (!sessionId.value) return
+  await Promise.all([
+    kb.loadProfiles(sessionId.value).catch(() => {}),
+    kb.loadPrivacy(sessionId.value).then((p) => { if (p?.retention_days) retentionDays.value = p.retention_days }).catch(() => {})
+  ])
 }
 
-async function onDrop(e) {
-  e.preventDefault()
+function validate(file) {
+  const ext = (file.name || '').split('.').pop().toLowerCase()
+  if (!ACCEPT.includes(ext)) return `不支持 .${ext} 格式，请上传 PDF / Word / TXT / Markdown`
+  if (file.size > MAX_MB * 1024 * 1024) return `文件超过 ${MAX_MB}MB`
+  return ''
+}
+
+async function doUpload(file) {
+  if (!file || kb.uploading) return
+  const err = validate(file)
+  if (err) { toast(err, 'warning'); return }
+  const days = Math.min(3650, Math.max(1, Number(retentionDays.value) || 30))
+  try {
+    const result = await kb.upload(file, { documentType: documentType.value, sessionId: sessionId.value, retentionDays: days, redact: redact.value })
+    toast(`${result?.filename || file.name} 已解析，共 ${result?.chunks ?? 0} 个片段`, 'success')
+    await loadFiles()
+  } catch (e) {
+    toast(e.message || '上传失败', 'danger')
+  }
+}
+
+function onFileChange(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  doUpload(file)
+}
+function onDrop(e) {
   dragOver.value = false
-  const file = e.dataTransfer.files[0]
-  if (file) {
-    await kb.upload(file, { documentType: documentType.value, sessionId: sessionId.value, retentionDays: retentionDays.value, redact: redact.value })
-    if (kb.uploadResult) await loadFiles()
+  doUpload(e.dataTransfer?.files?.[0])
+}
+
+async function onDelete(file) {
+  if (!confirm(`确认删除「${file.source}」及其全部片段？此操作不可恢复。`)) return
+  deletingId.value = file.document_id
+  try {
+    await kb.remove(file.document_id)
+    files.value = files.value.filter((f) => f.document_id !== file.document_id)
+    toast('已删除', 'success')
+  } catch (e) {
+    toast(`删除失败：${e.message}`, 'danger')
+  } finally {
+    deletingId.value = ''
   }
 }
 
 async function onSearch() {
-  if (!query.value.trim()) return
-  await kb.search(query.value)
-}
-
-async function onDelete(file) {
-  if (!confirm(`确认删除「${file.source}」的所有片段?此操作不可恢复。`)) return
-  deletingSource.value = file.document_id
+  const q = query.value.trim()
+  if (!q) return
   try {
-    await kb.remove(file.document_id)
-    await loadFiles()
+    await kb.search(q, 4, sessionId.value)
   } catch (e) {
-    alert(`删除失败:${e.message}`)
+    toast(e.message || '检索失败', 'danger')
   } finally {
-    deletingSource.value = ''
+    searched.value = true
   }
 }
 
-async function generateProfile() {
+async function onGenerateProfile() {
   if (!sessionId.value) {
-    alert('请先在面试间创建会话，再生成岗位画像。')
+    toast('请先在面试间开始一场面试，再生成岗位画像', 'warning')
     return
   }
   profileLoading.value = true
-  try { await kb.generate(sessionId.value) } catch (e) { alert(`画像生成失败:${e.message}`) } finally { profileLoading.value = false }
+  try {
+    await kb.generate(sessionId.value)
+    toast('画像已更新', 'success')
+  } catch (e) {
+    toast(`画像生成失败：${e.message}`, 'danger')
+  } finally {
+    profileLoading.value = false
+  }
+}
+
+async function saveRetention() {
+  if (!sessionId.value) return
+  const days = Math.min(3650, Math.max(1, Number(retentionDays.value) || 30))
+  retentionDays.value = days
+  retentionSaving.value = true
+  try {
+    await kb.setRetention(sessionId.value, days)
+    toast(`保留期已设置为 ${days} 天`, 'success')
+  } catch (e) {
+    toast(e.message || '保存失败', 'danger')
+  } finally {
+    retentionSaving.value = false
+  }
 }
 
 async function clearData() {
   if (!confirm('确认清空所有个人资料、会话与评估数据？此操作不可恢复。')) return
   privacyLoading.value = true
-  try { await kb.clearAll(); files.value = []; chat.reset() } catch (e) { alert(`清空失败:${e.message}`) } finally { privacyLoading.value = false }
+  try {
+    await kb.clearAll()
+    files.value = []
+    kb.searchResults = []
+    chat.reset()
+    toast('个人数据已全部清空', 'success')
+  } catch (e) {
+    toast(`清空失败：${e.message}`, 'danger')
+  } finally {
+    privacyLoading.value = false
+  }
 }
-
-function fileIcon(name) {
-  const ext = (name || '').split('.').pop().toLowerCase()
-  if (ext === 'pdf') return '📕'
-  if (['doc', 'docx'].includes(ext)) return '📘'
-  if (ext === 'md') return '📝'
-  return '📄'
-}
-
-// 总片段数
-const totalChunks = () => files.value.reduce((s, f) => s + f.chunks, 0)
 
 onMounted(() => {
   loadFiles()
+  loadSessionExtras()
 })
 </script>
 
 <template>
-  <div class="kb-page">
-    <div class="page-title">个人资料库</div>
-    <div class="page-sub">上传简历、面经、笔记,Agent 会基于你的真实经历提问与评估</div>
+  <div class="container kb-page">
+    <header class="page-head">
+      <div>
+        <div class="eyebrow">Knowledge Base</div>
+        <h1 class="page-title">个人资料库</h1>
+        <p class="page-sub">上传简历、JD 与企业资料，面试官会基于你的真实经历提问，评估也会引用原文作为依据</p>
+      </div>
+      <button class="btn btn-gradient" @click="router.push('/chat')"><Icon name="play" :size="16" /> 开始面试</button>
+    </header>
 
-    <!-- 上传区 -->
-    <div
-      class="card upload-zone"
-      :class="{ drag: dragOver }"
-      @dragover.prevent="dragOver = true"
-      @dragleave="dragOver = false"
-      @drop="onDrop"
-    >
-      <div class="upload-icon">📎</div>
-      <div class="upload-text">
-        <strong>点击或拖拽文件到此处上传</strong>
-        <div class="text-soft text-sm mt-2">支持 PDF / Word / TXT / Markdown</div>
-      </div>
-      <div class="upload-options">
-        <select v-model="documentType" class="select">
-          <option value="resume">简历</option><option value="candidate">候选人资料</option><option value="job_description">JD</option><option value="company">企业介绍</option><option value="other">其他</option>
-        </select>
-        <label class="text-soft text-sm"><input v-model="redact" type="checkbox" /> 自动脱敏</label>
-        <label class="text-soft text-sm">保留 <input v-model.number="retentionDays" class="days-input" type="number" min="1" max="3650" /> 天</label>
-      </div>
-      <label class="btn btn-primary">
-        选择文件
-        <input type="file" accept=".pdf,.docx,.doc,.txt,.md" hidden @change="onFileChange" />
-      </label>
+    <div v-if="!sessionId" class="alert alert-info">
+      <Icon class="alert-icon" name="info" :size="18" />
+      <div class="flex-1">当前未绑定面试会话，资料将作为全局资料使用。开始一场面试后上传，可生成专属的岗位匹配画像。</div>
     </div>
 
-    <!-- 上传结果 -->
-    <div v-if="kb.uploading" class="card status">⏳ 正在解析并向量化…</div>
-    <div v-if="kb.uploadResult" class="card status success">
-      ✅ {{ kb.uploadResult.message }}
-      <span class="text-soft text-sm">
-        ({{ kb.uploadResult.filename }} · {{ kb.uploadResult.chunks }} 片段)
-      </span>
-    </div>
-
-    <!-- 已上传文件列表 -->
-    <div class="card">
-      <div class="section-head">
-        <div class="section-title">已上传文件</div>
-        <span v-if="files.length" class="text-soft text-sm">
-          共 {{ files.length }} 个文件 · {{ totalChunks() }} 个片段
-        </span>
-        <button class="btn btn-ghost btn-sm" @click="loadFiles" :disabled="loadingFiles">
-          {{ loadingFiles ? '刷新中…' : '↻ 刷新' }}
-        </button>
+    <!-- 统计 -->
+    <section class="grid-4">
+      <div class="card stat">
+        <div class="stat-label">已上传文件</div>
+        <div class="stat-value">{{ files.length }}</div>
+        <div class="stat-foot">共 {{ totalChunks }} 个检索片段</div>
       </div>
-
-      <div v-if="files.length" class="file-list">
-        <div v-for="f in files" :key="f.document_id" class="file-item">
-          <span class="file-icon">{{ fileIcon(f.source) }}</span>
-          <span class="file-name" :title="f.source">{{ f.source }}</span>
-          <span class="tag">{{ ({ resume: '简历', job_description: 'JD', company: '企业介绍', other: '其他' }[f.document_type] || f.document_type) }}</span>
-          <span class="tag">ID {{ f.document_id }}</span>
-          <span class="file-chunks tag">{{ f.chunks }} 片段</span>
-          <button
-            class="btn-del"
-            @click="onDelete(f)"
-            :disabled="deletingSource === f.document_id"
-            title="删除"
-          >
-            {{ deletingSource === f.document_id ? '…' : '✕' }}
-          </button>
-        </div>
+      <div class="card stat">
+        <div class="stat-label">简历</div>
+        <div class="stat-value" :class="hasResume ? 'text-success' : 'text-dim'">{{ typeCounts.resume || 0 }}</div>
+        <div class="stat-foot">{{ hasResume ? '已就绪' : '建议上传' }}</div>
       </div>
-      <div v-else-if="!loadingFiles" class="empty-hint text-soft text-sm">
-        还没有上传文件,Agent 将无法基于个人资料提问
+      <div class="card stat">
+        <div class="stat-label">岗位 JD</div>
+        <div class="stat-value" :class="hasJD ? 'text-success' : 'text-dim'">{{ typeCounts.job_description || 0 }}</div>
+        <div class="stat-foot">{{ hasJD ? '已就绪' : '建议上传' }}</div>
       </div>
-    </div>
-
-    <div class="card profile-section">
-      <div class="section-head"><div class="section-title">岗位与能力画像</div><button class="btn btn-primary btn-sm" @click="generateProfile" :disabled="profileLoading">{{ profileLoading ? '生成中…' : '生成画像' }}</button></div>
-      <div v-if="kb.profile" class="profile-grid">
-        <div><b>岗位匹配度</b><strong class="match-score">{{ kb.profile.match_score }}%</strong></div>
-        <div><b>候选人优势</b><p>{{ kb.profile.candidate_strengths?.join('、') || '暂无' }}</p></div>
-        <div><b>能力缺口</b><p>{{ kb.profile.requirement_gaps?.join('、') || '暂无' }}</p></div>
-        <div><b>重点考察</b><p>{{ kb.profile.focus_areas?.join('、') || '暂无' }}</p></div>
-        <div><b>问题计划</b><p>{{ kb.profile.interview_plan?.join('；') || '暂无' }}</p></div>
-      </div><div v-else class="text-soft text-sm">绑定会话后可生成岗位、候选人与企业画像。</div>
-    </div>
-    <div class="card privacy-card">
-      <div class="section-title">隐私与数据管理</div>
-      <p class="text-soft text-sm">资料仅用于面试检索、岗位画像与评估；默认自动脱敏，保留期结束后自动清理。当前状态：{{ redact ? '上传时自动脱敏' : '未脱敏' }}。配置模型后，相关片段和对话才会发送到模型网关。</p>
-      <button class="btn btn-ghost btn-sm" @click="clearData" :disabled="privacyLoading">{{ privacyLoading ? '清理中…' : '清空个人数据' }}</button>
-    </div>
-
-    <!-- 检索测试 -->
-    <div class="card">
-      <div class="section-title">检索测试</div>
-      <p class="text-soft text-sm" style="margin-bottom: 12px">
-        输入问题,测试 Agent 能从你的资料中检索到哪些相关内容
-      </p>
-      <div class="search-row">
-        <input v-model="query" class="input" placeholder="例如:我在 RAG 项目里用了什么向量库?" @keydown.enter="onSearch" />
-        <button class="btn btn-primary" @click="onSearch" :disabled="kb.retrieving">
-          {{ kb.retrieving ? '检索中…' : '检索' }}
-        </button>
+      <div class="card stat">
+        <div class="stat-label">资料完整度</div>
+        <div class="stat-value">{{ readiness }}<small>%</small></div>
+        <div class="progress mt-2"><span :style="{ width: readiness + '%' }"></span></div>
       </div>
+    </section>
 
-      <div v-if="kb.searchResults.length" class="results">
-        <div v-for="(d, i) in kb.searchResults" :key="i" class="result-item">
-          <div class="result-head">
-            <span class="tag tag-primary">{{ d.source }}</span>
-            <span class="text-soft text-sm">相关度 {{ (d.score * 100).toFixed(0) }}%</span>
+    <div class="layout">
+      <div class="stack gap-4">
+        <!-- 上传 -->
+        <section class="card">
+          <div class="section-title"><Icon name="upload" :size="18" /> 上传资料</div>
+          <div class="type-grid">
+            <button v-for="t in DOC_TYPES" :key="t.id" type="button" class="type-card" :class="{ active: documentType === t.id }"
+              :aria-pressed="documentType === t.id" @click="documentType = t.id">
+              <Icon :name="t.icon" :size="18" />
+              <strong>{{ t.name }}</strong>
+              <span class="text-xs text-soft">{{ t.desc }}</span>
+            </button>
           </div>
-          <div class="result-content">{{ d.content }}</div>
-        </div>
+
+          <div class="dropzone mt-4" :class="{ drag: dragOver, busy: kb.uploading }" role="button" tabindex="0"
+            aria-label="点击或拖拽文件上传"
+            @click="fileInput?.click()" @keydown.enter.prevent="fileInput?.click()" @keydown.space.prevent="fileInput?.click()"
+            @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="onDrop">
+            <template v-if="kb.uploading">
+              <div class="spinner"></div>
+              <strong class="mt-2">正在解析、脱敏并建立索引…</strong>
+            </template>
+            <template v-else>
+              <div class="drop-icon"><Icon name="upload" :size="24" /></div>
+              <strong>点击或拖拽文件到此处</strong>
+              <span class="text-sm text-soft">将作为「{{ DOC_NAMES[documentType] }}」上传 · 支持 PDF / Word / TXT / Markdown，最大 {{ MAX_MB }}MB</span>
+            </template>
+            <input ref="fileInput" type="file" :accept="ACCEPT.map((e) => '.' + e).join(',')" hidden @change="onFileChange" />
+          </div>
+
+          <div class="row gap-4 wrap mt-4">
+            <label class="switch text-sm">
+              <input v-model="redact" type="checkbox" />
+              <span></span>自动脱敏（手机号、邮箱、身份证等）
+            </label>
+            <label class="row gap-2 text-sm text-soft">
+              保留
+              <input v-model.number="retentionDays" class="input days-input" type="number" min="1" max="3650" />
+              天
+            </label>
+          </div>
+        </section>
+
+        <!-- 文件列表 -->
+        <section class="card">
+          <div class="row mb-4">
+            <div class="section-title" style="margin: 0"><Icon name="folder" :size="18" /> 已上传文件</div>
+            <button class="btn btn-ghost btn-sm ml-auto" :disabled="loadingFiles" @click="loadFiles">
+              <Icon name="refresh" :size="14" /> 刷新
+            </button>
+          </div>
+          <div v-if="files.length" class="row gap-2 wrap mb-4">
+            <button class="chip" :class="{ active: typeFilter === 'all' }" @click="typeFilter = 'all'">全部 <span class="count">{{ files.length }}</span></button>
+            <template v-for="t in DOC_TYPES" :key="t.id">
+              <button v-if="typeCounts[t.id]" class="chip" :class="{ active: typeFilter === t.id }" @click="typeFilter = t.id">
+                {{ t.name }} <span class="count">{{ typeCounts[t.id] }}</span>
+              </button>
+            </template>
+          </div>
+
+          <div v-if="loadingFiles && !files.length" class="stack gap-2">
+            <div v-for="i in 3" :key="i" class="skeleton" style="height: 56px"></div>
+          </div>
+          <div v-else-if="visibleFiles.length" class="file-list">
+            <div v-for="f in visibleFiles" :key="f.document_id" class="file-item">
+              <div class="file-icon"><Icon :name="fileIcon(f.source)" :size="18" /></div>
+              <div class="flex-1" style="min-width: 0">
+                <div class="truncate file-name" :title="f.source">{{ f.source }}</div>
+                <div class="row gap-2 wrap text-xs text-soft mt-1">
+                  <span class="tag tag-primary">{{ DOC_NAMES[f.document_type] || f.document_type }}</span>
+                  <span>{{ f.chunks || 0 }} 片段</span>
+                  <span>上传于 {{ formatDate(f.created_at) }}</span>
+                  <span v-if="f.redacted" class="text-success"><Icon name="shield" :size="12" /> 已脱敏 {{ f.redaction_count || 0 }} 处</span>
+                  <span v-if="daysLeft(f.expires_at) !== null"><Icon name="clock" :size="12" /> {{ daysLeft(f.expires_at) }} 天后清理</span>
+                </div>
+              </div>
+              <button class="btn btn-icon btn-ghost btn-sm" :disabled="deletingId === f.document_id"
+                :aria-label="`删除 ${f.source}`" title="删除" @click="onDelete(f)">
+                <span v-if="deletingId === f.document_id" class="spinner"></span>
+                <Icon v-else name="trash" :size="16" />
+              </button>
+            </div>
+          </div>
+          <div v-else class="empty">
+            <div class="empty-icon"><Icon name="folder" :size="28" /></div>
+            <div class="empty-title">还没有资料</div>
+            <div class="empty-desc">上传简历后，面试官会围绕你的项目经历追问，回答更贴近真实面试</div>
+          </div>
+        </section>
+
+        <!-- 检索测试 -->
+        <section class="card">
+          <div class="section-title"><Icon name="search" :size="18" /> 检索测试</div>
+          <p class="text-soft text-sm mb-4">输入问题，查看面试官能从你的资料中检索到哪些内容</p>
+          <form class="row gap-2" @submit.prevent="onSearch">
+            <div class="input-group flex-1">
+              <Icon class="icon-lead" name="search" :size="16" />
+              <input v-model="query" class="input" maxlength="200" placeholder="例如：我在 RAG 项目里用了什么向量库？" aria-label="检索内容" />
+            </div>
+            <button class="btn btn-primary" type="submit" :disabled="kb.retrieving || !query.trim()">
+              <span v-if="kb.retrieving" class="spinner"></span>
+              {{ kb.retrieving ? '检索中' : '检索' }}
+            </button>
+          </form>
+          <div v-if="kb.searchResults.length" class="stack gap-2 mt-4">
+            <article v-for="(d, i) in kb.searchResults" :key="d.chunk_id || i" class="result">
+              <div class="row gap-2 wrap">
+                <span class="tag tag-primary"><Icon name="file" :size="12" /> {{ d.source || '资料' }}</span>
+                <span v-if="d.document_type" class="tag">{{ DOC_NAMES[d.document_type] || d.document_type }}</span>
+                <span v-if="d.page" class="text-xs text-soft">第 {{ d.page }} 页</span>
+                <span class="text-xs text-soft ml-auto">相关度 {{ Math.round((d.score || 0) * 100) }}%</span>
+              </div>
+              <div class="progress mt-2 thin"><span :style="{ width: Math.round((d.score || 0) * 100) + '%' }"></span></div>
+              <p class="result-content">{{ d.content || d.excerpt }}</p>
+            </article>
+          </div>
+          <div v-else-if="searched && !kb.retrieving" class="empty compact mt-4">
+            <div class="empty-desc">没有检索到相关内容。可以换个说法，或先上传相关资料。</div>
+          </div>
+        </section>
       </div>
-      <div v-else-if="query && !kb.retrieving" class="text-soft text-sm mt-4">
-        暂无检索结果。请先上传资料,或确认已配置 Embedding API Key。
-      </div>
+
+      <aside class="stack gap-4">
+        <!-- 画像 -->
+        <section class="card">
+          <div class="row mb-4">
+            <div class="section-title" style="margin: 0"><Icon name="target" :size="18" /> 岗位匹配画像</div>
+          </div>
+          <template v-if="kb.profile">
+            <div class="match">
+              <div class="match-num">{{ Math.round(kb.profile.match_score || 0) }}<small>%</small></div>
+              <div class="text-sm text-soft">岗位匹配度</div>
+              <div class="progress mt-2"><span :style="{ width: (kb.profile.match_score || 0) + '%' }"></span></div>
+            </div>
+            <div class="profile-block">
+              <div class="pb-title text-success"><Icon name="checkCircle" :size="14" /> 候选人优势</div>
+              <div class="row gap-2 wrap">
+                <span v-for="s in kb.profile.candidate_strengths || []" :key="s" class="tag tag-success">{{ s }}</span>
+                <span v-if="!kb.profile.candidate_strengths?.length" class="text-dim text-sm">暂无</span>
+              </div>
+            </div>
+            <div class="profile-block">
+              <div class="pb-title text-danger"><Icon name="alert" :size="14" /> 能力缺口</div>
+              <div class="row gap-2 wrap">
+                <span v-for="s in kb.profile.requirement_gaps || []" :key="s" class="tag tag-danger">{{ s }}</span>
+                <span v-if="!kb.profile.requirement_gaps?.length" class="text-dim text-sm">暂无</span>
+              </div>
+            </div>
+            <div class="profile-block">
+              <div class="pb-title text-primary"><Icon name="compass" :size="14" /> 重点考察</div>
+              <div class="row gap-2 wrap">
+                <span v-for="s in kb.profile.focus_areas || []" :key="s" class="tag">{{ s }}</span>
+                <span v-if="!kb.profile.focus_areas?.length" class="text-dim text-sm">暂无</span>
+              </div>
+            </div>
+            <div v-if="kb.profile.interview_plan?.length" class="profile-block">
+              <div class="pb-title"><Icon name="list" :size="14" /> 提问计划</div>
+              <ol class="plan">
+                <li v-for="(p, i) in kb.profile.interview_plan" :key="i">{{ p }}</li>
+              </ol>
+            </div>
+          </template>
+          <div v-else class="empty compact">
+            <div class="empty-icon"><Icon name="target" :size="24" /></div>
+            <div class="empty-desc">{{ sessionId ? '上传简历与 JD 后生成画像，面试官会据此制定提问计划' : '开始一场面试后即可生成专属画像' }}</div>
+          </div>
+          <button class="btn btn-primary btn-block mt-4" :disabled="profileLoading || !sessionId" @click="onGenerateProfile">
+            <span v-if="profileLoading" class="spinner"></span>
+            <Icon v-else name="sparkles" :size="16" />
+            {{ profileLoading ? '生成中…' : kb.profile ? '重新生成画像' : '生成画像' }}
+          </button>
+        </section>
+
+        <!-- 隐私 -->
+        <section class="card">
+          <div class="section-title"><Icon name="shield" :size="18" /> 隐私与数据</div>
+          <ul class="privacy-list text-sm text-soft">
+            <li><Icon name="lock" :size="14" /> {{ kb.privacy?.purpose || '资料仅用于模拟面试检索、画像与评估' }}</li>
+            <li><Icon name="database" :size="14" /> 存储：{{ kb.privacy?.storage || 'SQLite 与本地上传目录' }}</li>
+            <li><Icon name="server" :size="14" /> {{ kb.privacy?.external_processing || '配置模型后，相关片段和对话才会发送到模型网关' }}</li>
+            <li><Icon name="shield" :size="14" /> 上传时{{ redact ? '自动脱敏' : '不脱敏' }}</li>
+          </ul>
+          <div v-if="sessionId" class="row gap-2 mt-4">
+            <span class="text-sm">本会话保留期</span>
+            <input v-model.number="retentionDays" class="input days-input" type="number" min="1" max="3650" aria-label="保留天数" />
+            <span class="text-sm text-soft">天</span>
+            <button class="btn btn-secondary btn-sm ml-auto" :disabled="retentionSaving" @click="saveRetention">保存</button>
+          </div>
+          <button class="btn btn-danger btn-block mt-4" :disabled="privacyLoading" @click="clearData">
+            <span v-if="privacyLoading" class="spinner"></span>
+            <Icon v-else name="trash" :size="16" />
+            {{ privacyLoading ? '清理中…' : '清空全部个人数据' }}
+          </button>
+        </section>
+      </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.kb-page {
-  max-width: 860px;
-  margin: 0 auto;
-}
-.upload-zone {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  border: 2px dashed var(--border);
-  text-align: center;
-  transition: border-color 0.2s, background 0.2s;
-  margin-bottom: 16px;
-}
-.upload-zone.drag {
-  border-color: var(--primary);
-  background: rgba(79, 70, 229, 0.08);
-}
-.upload-icon {
-  font-size: 36px;
-}
-.upload-text {
-  flex: 1;
-  text-align: left;
-}
-.upload-options { display: grid; gap: 6px; min-width: 150px; }
-.days-input { width: 55px; padding: 3px 5px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
-.profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.profile-grid > div { padding: 10px; background: var(--bg); border-radius: var(--radius-sm); }
-.profile-grid p { color: var(--text-soft); font-size: 13px; margin-top: 4px; }
-.match-score { display: block; font-size: 28px; color: var(--success); }
-.privacy-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.privacy-card .section-title { width: 100%; margin-bottom: 0; }
-.privacy-card p { flex: 1; min-width: 220px; }
-.upload-text strong {
-  font-size: 15px;
-}
-.status {
-  margin-bottom: 16px;
-}
-.status.success {
-  border-color: var(--success);
-}
-.section-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.section-head .section-title {
-  margin-bottom: 0;
-  flex: 1;
-}
-.section-title {
-  font-weight: 700;
-  font-size: 16px;
-  margin-bottom: 6px;
-}
-.btn-sm {
-  padding: 5px 12px;
-  font-size: 13px;
-}
-.file-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.file-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  transition: border-color 0.15s;
-}
-.file-item:hover {
-  border-color: var(--primary);
-}
-.file-icon {
-  font-size: 20px;
-  flex-shrink: 0;
-}
-.file-name {
-  flex: 1;
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.file-chunks {
-  flex-shrink: 0;
-}
-.btn-del {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--text-soft);
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background 0.15s, color 0.15s;
-}
-.btn-del:hover:not(:disabled) {
-  background: var(--danger);
-  color: #fff;
-}
-.btn-del:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.empty-hint {
-  text-align: center;
-  padding: 24px 0;
-}
-.search-row {
-  display: flex;
-  gap: 10px;
-}
-.results {
-  margin-top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.result-item {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 14px;
-}
-.result-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.result-content {
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--text-soft);
-  white-space: pre-wrap;
-}
+.kb-page { display: flex; flex-direction: column; gap: 16px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.section-title { display: flex; align-items: center; gap: 8px; }
+.stat-value small { font-size: 14px; color: var(--text-dim); margin-left: 2px; }
 
+.type-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.type-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+  color: var(--text); text-align: left; cursor: pointer; transition: border-color .15s, background .15s, transform .15s;
+}
+.type-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+.type-card.active { border-color: var(--primary); background: var(--info-bg); box-shadow: 0 0 0 3px var(--primary-glow); }
+.type-card.active :deep(svg) { color: var(--primary); }
+
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 32px 16px; border: 2px dashed var(--border); border-radius: var(--radius); cursor: pointer;
+  text-align: center; transition: border-color .2s, background .2s;
+}
+.dropzone:hover, .dropzone:focus-visible, .dropzone.drag { border-color: var(--primary); background: var(--info-bg); outline: none; }
+.dropzone.busy { pointer-events: none; opacity: .8; }
+.drop-icon { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--info-bg); color: var(--primary); margin-bottom: 4px; }
+.days-input { width: 76px; padding: 6px 8px; }
+
+.file-list { display: flex; flex-direction: column; gap: 8px; }
+.file-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); transition: border-color .15s; }
+.file-item:hover { border-color: var(--primary); }
+.file-icon { width: 38px; height: 38px; flex-shrink: 0; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; background: var(--info-bg); color: var(--primary); }
+.file-name { font-weight: 600; font-size: 14px; }
+
+.result { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.result-content { margin: 10px 0 0; font-size: 14px; line-height: 1.7; color: var(--text-soft); white-space: pre-wrap; }
+.progress.thin { height: 4px; }
+.empty.compact { padding: 20px 8px; }
+
+.match { text-align: center; padding: 8px 0 16px; border-bottom: 1px solid var(--border); }
+.match-num { font-size: 44px; font-weight: 800; line-height: 1; color: var(--primary-soft); }
+.match-num small { font-size: 16px; }
+.profile-block { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.profile-block:last-of-type { border-bottom: none; }
+.pb-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.plan { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-soft); line-height: 1.7; }
+.privacy-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.privacy-list li { display: flex; gap: 8px; align-items: flex-start; line-height: 1.6; }
+.privacy-list li :deep(svg) { flex-shrink: 0; margin-top: 3px; }
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 1fr; }
+  .type-grid { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 768px) {
-  .upload-zone {
-    flex-direction: column;
-    text-align: center;
-  }
-  .upload-text {
-    text-align: center;
-  }
-  .upload-options { width: 100%; }
-  .profile-grid { grid-template-columns: 1fr; }
-  .search-row {
-    flex-direction: column;
-  }
+  .type-grid { grid-template-columns: repeat(2, 1fr); }
 }
 </style>

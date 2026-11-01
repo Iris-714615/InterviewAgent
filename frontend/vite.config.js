@@ -13,8 +13,8 @@ export default defineConfig(({ mode }) => ({
         name: '你的专属面试助手',
         short_name: '面试助手',
         description: '一对一 AI 面试指导,帮你拿到高薪 offer',
-        theme_color: '#4f46e5',
-        background_color: '#0f172a',
+        theme_color: '#ff7ca2',
+        background_color: '#000000',
         display: 'standalone',
         start_url: '/',
         lang: 'zh-CN',
@@ -25,6 +25,21 @@ export default defineConfig(({ mode }) => ({
       }
     })
   ],
+  build: {
+    target: 'es2020',
+    cssCodeSplit: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('echarts') || id.includes('zrender')) return 'echarts'
+          if (id.includes('marked') || id.includes('dompurify')) return 'markdown'
+          if (id.includes('vue') || id.includes('pinia')) return 'vue'
+          return undefined
+        }
+      }
+    }
+  },
   server: {
     // host: true 让开发服务器开放局域网访问,手机连同一 WiFi 即可通过电脑 IP 访问
     host: true,

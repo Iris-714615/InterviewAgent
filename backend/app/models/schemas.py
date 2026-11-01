@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 # ============ 枚举 ============
 class InterviewDirection(str, Enum):
-    """面试方向"""
+    """内置的经典面试方向（兼容旧接口；完整岗位见 app.catalog.positions）"""
     AI_APP_ENG = "ai_app_engineer"      # AI 大模型应用工程师
     AI_DEV = "ai_dev_engineer"           # AI 应用开发工程师
     AI_PM = "ai_product_manager"         # AI 产品经理
@@ -59,8 +59,9 @@ class ChatRequest(BaseModel):
     """面试对话请求"""
     message: str
     session_id: str | None = None
-    direction: InterviewDirection = InterviewDirection.AI_APP_ENG
+    direction: str = Field(default=InterviewDirection.AI_APP_ENG.value, max_length=64)
     role: InterviewRole = InterviewRole.TECHNICAL
+    position_description: str | None = Field(default=None, max_length=600)
     history: list[ChatMessage] = Field(default_factory=list)
     use_rag: bool = True                       # 是否检索个人资料
     coach_mode: bool = False                   # 是否求助教练(实时辅导)
@@ -146,7 +147,7 @@ class EvalDimension(BaseModel):
 
 class EvaluationRequest(BaseModel):
     """评估请求:传入整场面试对话"""
-    direction: InterviewDirection
+    direction: str = Field(max_length=64)
     role: InterviewRole
     messages: list[ChatMessage]
     session_id: str | None = None   # 可选,评估后回写分数到会话记录
@@ -204,7 +205,9 @@ class StatusResponse(BaseModel):
 # ============ 会话 ============
 class SessionInfo(BaseModel):
     session_id: str
-    direction: InterviewDirection
+    direction: str
+    direction_name: str = ""
+    position_description: str | None = None
     role: InterviewRole
     created_at: datetime
     message_count: int = 0
@@ -215,8 +218,9 @@ class SessionInfo(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
-    direction: InterviewDirection = InterviewDirection.AI_APP_ENG
+    direction: str = Field(default=InterviewDirection.AI_APP_ENG.value, max_length=64)
     role: InterviewRole = InterviewRole.TECHNICAL
+    position_description: str | None = Field(default=None, max_length=600)
     resume_document_id: str | None = None
     job_document_id: str | None = None
     company_document_id: str | None = None

@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     embedding_model: str = "qwen-text-embedding-v4"
     embedding_api_key: str = ""
     embedding_base_url: str = ""
-    embedding_timeout_seconds: float = 3.0
-    rag_timeout_seconds: float = 4.0
+    embedding_timeout_seconds: float = 2.0
+    rag_timeout_seconds: float = 1.5
     rag_vector_enabled: bool = False
     llm_timeout_seconds: float = 15.0
     chat_first_token_seconds: float = 10.0

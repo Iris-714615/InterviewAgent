@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-import re
 
 from pydantic import ValidationError
 
 from app.agents.prompts import EVALUATION_PROMPT
+from app.catalog.positions import position_name
 from app.core.config import settings
 from app.core.llm import ModelRouter, llm_service
 from app.models.schemas import (
@@ -14,7 +14,6 @@ from app.models.schemas import (
     EvalDimension,
     EvaluationResponse,
     EvidenceItem,
-    InterviewDirection,
     InterviewRole,
 )
 
@@ -24,7 +23,7 @@ class EvaluatorAgent:
 
     async def evaluate(
         self,
-        direction: InterviewDirection,
+        direction: str,
         role: InterviewRole,
         messages: list[ChatMessage],
         session_id: str | None = None,
@@ -37,7 +36,7 @@ class EvaluatorAgent:
             return self._failed("反馈暂时无法生成，你的回答已保留，可以稍后重试。")
         transcript = self._build_transcript(interview_messages)
         prompt = (
-            f"【面试方向】{direction.value}\n"
+            f"【面试岗位】{position_name(getattr(direction, 'value', direction))}\n"
             f"【面试角色】{role.value}\n\n"
             f"【面试对话记录】\n{transcript}\n\n"
             f"{EVALUATION_PROMPT}"

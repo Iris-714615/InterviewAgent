@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.catalog.positions import normalize_direction, position_name
 from app.core.config import settings
 from app.models.schemas import ChatMessage, InterviewDirection, InterviewRole, MessageType, SessionInfo
 
@@ -30,8 +31,11 @@ class SessionStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.execute("PRAGMA busy_timeout=10000")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            self._favorite_cache: frozenset[str] | None = None
+            self._practice_cache: dict[str, int] | None = None
             self._create_schema()
             self._migrate_json_once()
 
@@ -69,7 +73,20 @@ class SessionStore:
         );
         CREATE INDEX IF NOT EXISTS idx_metrics_session ON llm_metrics(session_id, created_at);
         """)
-        self._ensure_columns("sessions", {"resume_document_id": "TEXT", "job_document_id": "TEXT", "company_document_id": "TEXT", "ability_profile_json": "TEXT"})
+        self._conn.executescript("""
+        CREATE TABLE IF NOT EXISTS question_favorites (
+          question_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS question_practices (
+          practice_id TEXT PRIMARY KEY, question_id TEXT NOT NULL, answer TEXT NOT NULL,
+          self_rating INTEGER, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_practices_question ON question_practices(question_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_practices_created ON question_practices(created_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
+        """)
+        self._ensure_columns("sessions", {"resume_document_id": "TEXT", "job_document_id": "TEXT", "company_document_id": "TEXT",
+            "ability_profile_json": "TEXT", "position_description": "TEXT"})
         self._ensure_columns("knowledge_documents", {"redaction_count": "INTEGER NOT NULL DEFAULT 0"})
         self._conn.commit()
 
@@ -104,8 +121,11 @@ class SessionStore:
         except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
             return
 
-    def create(self, direction: InterviewDirection, role: InterviewRole, resume_document_id: str | None = None,
-               job_document_id: str | None = None, company_document_id: str | None = None) -> SessionInfo:
+    def create(self, direction: str | InterviewDirection, role: InterviewRole, resume_document_id: str | None = None,
+               job_document_id: str | None = None, company_document_id: str | None = None,
+               position_description: str | None = None) -> SessionInfo:
+        direction = normalize_direction(getattr(direction, "value", direction))
+        description = (position_description or "").strip()[:600] or None
         bindings = ((resume_document_id, "resume"), (job_document_id, "job_description"), (company_document_id, "company"))
         for doc_id, expected in bindings:
             if doc_id:
@@ -114,8 +134,8 @@ class SessionStore:
                     raise ValueError(f"不可绑定的 {expected} 文档")
         sid, now = uuid.uuid4().hex[:12], datetime.now().isoformat()
         with self._lock, self._conn:
-            self._conn.execute("INSERT INTO sessions(session_id,direction,role,created_at,resume_document_id,job_document_id,company_document_id) VALUES(?,?,?,?,?,?,?)", (sid, direction.value, role.value, now,
-                resume_document_id, job_document_id, company_document_id))
+            self._conn.execute("INSERT INTO sessions(session_id,direction,role,created_at,resume_document_id,job_document_id,company_document_id,position_description) VALUES(?,?,?,?,?,?,?,?)", (sid, direction, role.value, now,
+                resume_document_id, job_document_id, company_document_id, description))
             self._conn.execute("INSERT INTO privacy_settings VALUES(?,?,?)", (sid, settings.default_retention_days, now))
         return self.info(sid)  # type: ignore[return-value]
 
@@ -127,11 +147,16 @@ class SessionStore:
             model=r["model"], route_reason=r["route_reason"], retrieval=json.loads(r["retrieval_json"] or "[]"),
             created_at=datetime.fromisoformat(r["created_at"])) for r in rows]
 
-    def get_context(self, session_id: str) -> tuple[InterviewDirection, InterviewRole]:
+    def get_context(self, session_id: str) -> tuple[str, InterviewRole]:
         with self._lock:
             row = self._conn.execute("SELECT direction,role FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         if not row: raise KeyError(session_id)
-        return InterviewDirection(row[0]), InterviewRole(row[1])
+        return row[0], InterviewRole(row[1])
+
+    def get_position_description(self, session_id: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute("SELECT position_description FROM sessions WHERE session_id=?", (session_id,)).fetchone()
+        return row[0] if row else None
 
     def get_bindings(self, session_id: str) -> list[str]:
         with self._lock:
@@ -160,7 +185,8 @@ class SessionStore:
         with self._lock:
             row = self._conn.execute("SELECT s.*,COUNT(m.message_id) count FROM sessions s LEFT JOIN messages m ON m.session_id=s.session_id WHERE s.session_id=? GROUP BY s.session_id", (session_id,)).fetchone()
         if not row: return None
-        return SessionInfo(session_id=row["session_id"], direction=row["direction"], role=row["role"], created_at=datetime.fromisoformat(row["created_at"]),
+        return SessionInfo(session_id=row["session_id"], direction=row["direction"], direction_name=position_name(row["direction"]),
+            position_description=row["position_description"], role=row["role"], created_at=datetime.fromisoformat(row["created_at"]),
             message_count=row["count"], overall_score=row["overall_score"], resume_document_id=row["resume_document_id"],
             job_document_id=row["job_document_id"], company_document_id=row["company_document_id"])
 
@@ -222,7 +248,10 @@ class SessionStore:
         strong_rate = settings.cost_glm_input_per_million + settings.cost_glm_output_per_million
         baseline = sum((r["prompt_tokens"] + r["completion_tokens"]) * strong_rate / 1_000_000 for r in successful)
         reasons: dict[str, int] = {}
-        for r in rows: reasons[r["route_reason"]] = reasons.get(r["route_reason"], 0) + 1
+        models: dict[str, int] = {}
+        for r in rows:
+            reasons[r["route_reason"]] = reasons.get(r["route_reason"], 0) + 1
+            models[r["model"]] = models.get(r["model"], 0) + 1
         return {"session_id": session_id, "calls": len(rows), "successful_calls": len(successful), "total_tokens": sum(r["total_tokens"] for r in rows),
             "estimated_cost": round(actual, 8), "full_strong_model_cost": round(baseline, 8), "saved_cost": round(max(0, baseline-actual), 8),
             "average_latency_ms": round(sum(r["latency_ms"] for r in rows)/len(rows), 2) if rows else 0, "route_reasons": reasons, "model_calls": models, "recent_calls": rows[:20]}
@@ -234,8 +263,42 @@ class SessionStore:
             row = self._conn.execute("SELECT * FROM sessions WHERE session_id<>? AND direction=? AND role=? AND COALESCE(job_document_id,'')=COALESCE(?,'') AND evaluation_json IS NOT NULL AND created_at<? ORDER BY created_at DESC LIMIT 1", (session_id, current["direction"], current["role"], current["job_document_id"], current["created_at"])).fetchone()
         return dict(row) if row else None
 
+    # ---- 题库：收藏与练习 ----
+    def favorite_ids(self) -> set[str]:
+        with self._lock:
+            if self._favorite_cache is None:
+                self._favorite_cache = frozenset(r[0] for r in self._conn.execute("SELECT question_id FROM question_favorites"))
+            return set(self._favorite_cache)
+    def set_favorite(self, question_id: str, favorite: bool) -> None:
+        with self._lock, self._conn:
+            self._favorite_cache = None
+            if favorite:
+                self._conn.execute("INSERT OR IGNORE INTO question_favorites VALUES(?,?)", (question_id, datetime.now().isoformat()))
+            else:
+                self._conn.execute("DELETE FROM question_favorites WHERE question_id=?", (question_id,))
+    def add_practice(self, question_id: str, answer: str, self_rating: int | None) -> dict:
+        record = {"practice_id": uuid.uuid4().hex, "question_id": question_id, "answer": answer,
+                  "self_rating": self_rating, "created_at": datetime.now().isoformat()}
+        with self._lock, self._conn:
+            self._practice_cache = None
+            self._conn.execute("INSERT INTO question_practices VALUES(:practice_id,:question_id,:answer,:self_rating,:created_at)", record)
+        return record
+    def list_practices(self, question_id: str | None = None, limit: int = 50) -> list[dict]:
+        sql = "SELECT * FROM question_practices" + (" WHERE question_id=?" if question_id else "") + " ORDER BY created_at DESC LIMIT ?"
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, (question_id, limit) if question_id else (limit,))]
+    def practice_stats(self) -> dict[str, int]:
+        with self._lock:
+            if self._practice_cache is None:
+                self._practice_cache = {r[0]: r[1] for r in self._conn.execute("SELECT question_id,COUNT(*) FROM question_practices GROUP BY question_id")}
+            return dict(self._practice_cache)
+
     def clear_all(self) -> None:
         with self._lock, self._conn:
+            self._favorite_cache = None
+            self._practice_cache = None
+            self._conn.execute("DELETE FROM question_practices")
+            self._conn.execute("DELETE FROM question_favorites")
             self._conn.execute("DELETE FROM llm_metrics")
             self._conn.execute("DELETE FROM knowledge_documents")
             self._conn.execute("DELETE FROM sessions")

@@ -1,6 +1,7 @@
 """评估接口 - 面试结束后生成雷达图 + 改进建议"""
 from __future__ import annotations
 
+import asyncio
 import re
 
 from fastapi import APIRouter, HTTPException
@@ -16,14 +17,13 @@ router = APIRouter(prefix="/evaluation", tags=["评估反馈"])
 async def evaluate(req: EvaluationRequest):
     """对整场面试对话进行评估,返回打分、维度、亮点、短板、建议。"""
     if req.session_id:
-        if not session_store.exists(req.session_id):
-            raise HTTPException(status_code=404, detail="会话不存在")
-        direction, role = session_store.get_context(req.session_id)
-        req = req.model_copy(update={
-            "direction": direction,
-            "role": role,
-            "messages": session_store.get_messages(req.session_id, channel="interview"),
-        })
+        def load():
+            if not session_store.exists(req.session_id):
+                raise HTTPException(status_code=404, detail="会话不存在")
+            direction, role = session_store.get_context(req.session_id)
+            return direction, role, session_store.get_messages(req.session_id, channel="interview")
+        direction, role, history = await asyncio.to_thread(load)
+        req = req.model_copy(update={"direction": direction, "role": role, "messages": history})
     else:
         req = req.model_copy(update={"messages": [m for m in req.messages if m.channel == "interview"]})
     result = await agent_router.evaluate(req)
@@ -35,12 +35,16 @@ async def evaluate(req: EvaluationRequest):
                 seen[item.chunk_id] = item
         result.knowledge_evidence = list(seen.values())
         if result.status == "completed":
-            session_store.set_evaluation(req.session_id, result.model_dump(mode="json"))
+            await asyncio.to_thread(session_store.set_evaluation, req.session_id, result.model_dump(mode="json"))
     return result
 
 
 @router.get("/{session_id}/growth")
 async def growth_comparison(session_id: str):
+    return await asyncio.to_thread(_growth_comparison, session_id)
+
+
+def _growth_comparison(session_id: str):
     if not session_store.exists(session_id): raise HTTPException(404, "会话不存在")
     current = session_store.get_evaluation(session_id)
     if not current: raise HTTPException(409, "当前会话尚未完成评估")
@@ -75,9 +79,11 @@ async def growth_comparison(session_id: str):
 @router.get("/{session_id}", response_model=EvaluationResponse)
 async def get_evaluation(session_id: str):
     """获取某场面试的评估结果(用于历史报告回顾)。"""
-    if not session_store.exists(session_id):
-        raise HTTPException(status_code=404, detail="会话不存在")
-    evaluation = session_store.get_evaluation(session_id)
+    def load():
+        if not session_store.exists(session_id):
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return session_store.get_evaluation(session_id)
+    evaluation = await asyncio.to_thread(load)
     if not evaluation:
         raise HTTPException(status_code=404, detail="该会话尚未评估")
     return evaluation

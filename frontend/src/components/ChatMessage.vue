@@ -2,38 +2,34 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import Icon from './Icon.vue'
 import { modelBadge } from '../api'
 import { speakText, stopSpeech } from '../utils/speech'
+import { toast } from '../utils/toast'
 
 const props = defineProps({
   role: { type: String, required: true }, // user | assistant
   content: { type: String, default: '' },
-  coach: { type: Boolean, default: false }, // 是否教练消息
+  coach: { type: Boolean, default: false },
   streaming: { type: Boolean, default: false },
   model: { type: String, default: '' },
   routeReason: { type: String, default: '' },
-  retrieval: { type: Array, default: () => [] }
+  retrieval: { type: Array, default: () => [] },
+  fallback: { type: Boolean, default: false }
 })
 
 marked.setOptions({ breaks: true })
 
 const html = computed(() => DOMPurify.sanitize(marked.parse(props.content || '')))
-
 const isUser = computed(() => props.role === 'user')
-const label = computed(() => {
-  if (isUser.value) return '我'
-  return props.coach ? '教练' : '面试官'
-})
-const avatar = computed(() => (isUser.value ? '🧑' : props.coach ? '🎓' : '🎤'))
+const label = computed(() => (isUser.value ? '我' : props.coach ? 'AI 教练' : 'AI 面试官'))
+const avatarIcon = computed(() => (isUser.value ? 'user' : props.coach ? 'graduation' : 'bot'))
 const badge = computed(() => modelBadge(props.model))
+const showCitations = ref(false)
 
-// 语音播放状态
-const ttsLoading = ref(false)
 const ttsPlaying = ref(false)
-const ttsError = ref('')
 let speechController = null
-
-const canPlay = computed(() => !isUser.value && props.content && !props.streaming)
+const canAct = computed(() => !isUser.value && props.content && !props.streaming)
 
 async function toggleTTS() {
   if (ttsPlaying.value) {
@@ -42,251 +38,126 @@ async function toggleTTS() {
     ttsPlaying.value = false
     return
   }
-  if (ttsLoading.value) return
-  ttsError.value = ''
-  ttsLoading.value = true
   try {
     stopSpeech()
     speechController = new AbortController()
     ttsPlaying.value = true
-    ttsLoading.value = false
     await speakText(props.content, speechController.signal)
-  } catch (e) {
-    ttsError.value = '朗读暂不可用，请阅读上方文字。'
+  } catch {
+    toast.error('朗读暂不可用，请阅读文字内容')
   } finally {
-    ttsLoading.value = false
     ttsPlaying.value = false
   }
 }
 
-onBeforeUnmount(() => {
-  speechController?.abort()
-})
+async function copy() {
+  try {
+    await navigator.clipboard.writeText(props.content)
+    toast.success('已复制到剪贴板')
+  } catch {
+    toast.error('复制失败，请手动选择文本')
+  }
+}
+
+onBeforeUnmount(() => speechController?.abort())
 </script>
 
 <template>
   <div class="msg" :class="{ user: isUser, coach: coach && !isUser }">
-    <div class="avatar">{{ avatar }}</div>
-    <div class="bubble-wrap">
-      <div class="label">
-        {{ label }}
-        <span v-if="badge" class="model-badge" :class="badge" :title="'使用模型:' + model">{{ badge }}</span>
-        <span v-if="streaming" class="typing">·输入中</span>
+    <div class="avatar" aria-hidden="true"><Icon :name="avatarIcon" :size="18" /></div>
+    <div class="body">
+      <div class="meta">
+        <span class="who">{{ label }}</span>
+        <span v-if="badge" class="model-badge" :title="'使用模型：' + model">{{ badge }}</span>
+        <span v-if="fallback" class="tag tag-warning">基础引导</span>
       </div>
+
       <div v-if="isUser" class="bubble">{{ content }}</div>
-      <div v-else class="bubble md" v-html="html"></div>
-      <div v-if="!isUser && (retrieval.length || routeReason)" class="retrieval-panel">
-        <div class="retrieval-head">检索依据 <span v-if="routeReason" class="route-reason">{{ routeReason }}</span></div>
-        <div v-for="item in retrieval" :key="item.chunk_id || item.source" class="citation">
-          <span class="tag tag-primary">{{ item.source || '资料' }}</span>
-          <span v-if="item.document_type" class="tag">{{ item.document_type }}</span>
-          <span v-if="item.page" class="citation-meta">第 {{ item.page }} 页</span>
-          <span v-if="item.line" class="citation-meta">第 {{ item.line }} 行</span>
-          <span class="citation-meta">相关度 {{ Math.round((item.score || 0) * 100) }}%</span>
-          <div v-if="item.excerpt" class="citation-excerpt">{{ item.excerpt }}</div>
+      <div v-else class="bubble md">
+        <div v-if="!content && streaming" class="thinking" aria-label="正在思考">
+          <span></span><span></span><span></span>
         </div>
+        <div v-else v-html="html"></div>
+        <span v-if="streaming && content" class="caret" aria-hidden="true"></span>
       </div>
-      <div v-if="canPlay" class="msg-actions">
-        <button class="tts-btn" :disabled="ttsLoading" @click="toggleTTS">
-          <span v-if="ttsLoading">准备朗读…</span>
-          <span v-else-if="ttsPlaying">⏸ 停止</span>
-          <span v-else>🔊 朗读</span>
+
+      <div v-if="canAct" class="actions">
+        <button class="act" :class="{ on: ttsPlaying }" :aria-label="ttsPlaying ? '停止朗读' : '朗读'" @click="toggleTTS">
+          <Icon :name="ttsPlaying ? 'stop' : 'volume'" :size="14" />{{ ttsPlaying ? '停止' : '朗读' }}
         </button>
-        <span v-if="ttsError" class="tts-err">{{ ttsError }}</span>
+        <button class="act" aria-label="复制" @click="copy"><Icon name="copy" :size="14" />复制</button>
+        <button v-if="retrieval.length" class="act" :class="{ on: showCitations }" @click="showCitations = !showCitations">
+          <Icon name="database" :size="14" />依据 {{ retrieval.length }}
+        </button>
+        <span v-if="routeReason" class="route" :title="routeReason"><Icon name="route" :size="12" />{{ routeReason }}</span>
       </div>
+
+      <transition name="fade">
+        <div v-if="showCitations && retrieval.length" class="citations">
+          <div v-for="item in retrieval" :key="item.chunk_id || item.source" class="citation">
+            <div class="row gap-2 wrap">
+              <span class="tag tag-primary"><Icon name="fileText" :size="12" />{{ item.source || '资料' }}</span>
+              <span v-if="item.document_type" class="tag">{{ item.document_type }}</span>
+              <span v-if="item.page" class="text-xs text-dim">第 {{ item.page }} 页</span>
+              <span class="text-xs text-dim ml-auto">相关度 {{ Math.round((item.score || 0) * 100) }}%</span>
+            </div>
+            <p v-if="item.excerpt" class="excerpt">{{ item.excerpt }}</p>
+          </div>
+        </div>
+      </transition>
     </div>
   </div>
 </template>
 
 <style scoped>
-.msg {
-  display: flex;
-  gap: 12px;
-  max-width: 860px;
-  margin: 0 auto 20px;
-  animation: fadeInUp 0.3s ease;
-}
-.msg.user {
-  flex-direction: row-reverse;
-}
+.msg { display: flex; gap: 12px; max-width: 820px; margin: 0 auto 22px; animation: fadeInUp .3s var(--ease); }
+.msg.user { flex-direction: row-reverse; }
 .avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--bg-hover);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
+  width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--gradient-primary); color: var(--text-on-primary);
+  box-shadow: var(--shadow-glow);
 }
-.msg.user .avatar {
-  background: rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.3);
-}
-.msg.coach .avatar {
-  background: rgba(251, 191, 36, 0.15);
-  border-color: rgba(251, 191, 36, 0.3);
-}
-.bubble-wrap {
-  display: flex;
-  flex-direction: column;
-  max-width: 78%;
-}
-.msg.user .bubble-wrap {
-  align-items: flex-end;
-}
-.label {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 5px;
-  padding: 0 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.typing {
-  color: var(--primary-soft);
-  margin-left: 4px;
-}
+.msg.user .avatar { background: var(--bg-hover); color: var(--text-soft); box-shadow: none; border: 1px solid var(--border); }
+.msg.coach .avatar { background: var(--coach); box-shadow: none; }
+.body { display: flex; flex-direction: column; min-width: 0; max-width: 82%; }
+.msg.user .body { align-items: flex-end; }
+.meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--text-dim); }
+.who { font-weight: 600; color: var(--text-soft); }
 .model-badge {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: var(--radius-pill);
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  line-height: 1.6;
-}
-.model-badge.flash {
-  background: rgba(52, 211, 153, 0.16);
-  color: #6ee7b7;
-  border: 1px solid rgba(52, 211, 153, 0.3);
-}
-.model-badge.pro {
-  background: rgba(96, 165, 250, 0.16);
-  color: #93c5fd;
-  border: 1px solid rgba(96, 165, 250, 0.3);
-}
-.model-badge.glm {
-  background: rgba(192, 132, 252, 0.16);
-  color: #d8b4fe;
-  border: 1px solid rgba(192, 132, 252, 0.3);
+  font-size: 10px; font-family: var(--font-mono); padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--primary-bg); color: var(--primary-soft); border: 1px solid var(--primary-border);
 }
 .bubble {
-  padding: 13px 17px;
-  border-radius: 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  white-space: pre-wrap;
-  word-break: break-word;
-  box-shadow: var(--shadow-soft);
+  position: relative; padding: 12px 16px; border-radius: 4px var(--radius) var(--radius) var(--radius);
+  background: var(--bg-card); border: 1px solid var(--border); box-shadow: var(--shadow-xs);
+  word-break: break-word; line-height: 1.7;
 }
 .msg.user .bubble {
-  background: var(--gradient-primary);
-  border-color: rgba(99, 102, 241, 0.5);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25);
+  white-space: pre-wrap; border-radius: var(--radius) 4px var(--radius) var(--radius);
+  background: var(--gradient-primary); color: var(--text-on-primary); border-color: transparent;
 }
-.msg.coach .bubble {
-  background: rgba(251, 191, 36, 0.1);
-  border-color: rgba(251, 191, 36, 0.35);
-  box-shadow: 0 4px 16px rgba(251, 191, 36, 0.1);
+.msg.coach .bubble { background: color-mix(in srgb, var(--coach) 9%, var(--bg-card)); border-color: color-mix(in srgb, var(--coach) 35%, transparent); }
+.thinking { display: flex; gap: 5px; padding: 6px 2px; }
+.thinking span { width: 7px; height: 7px; border-radius: 50%; background: var(--primary-soft); animation: pulse 1.2s infinite ease-in-out; }
+.thinking span:nth-child(2) { animation-delay: .15s; }
+.thinking span:nth-child(3) { animation-delay: .3s; }
+.caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: -2px; background: var(--primary); animation: blink 1s steps(2) infinite; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; opacity: .72; transition: opacity var(--dur); }
+.msg:hover .actions { opacity: 1; }
+.act {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; font-size: 12px;
+  border-radius: var(--radius-xs); color: var(--text-dim); background: transparent; border: none; cursor: pointer;
+  transition: all var(--dur) var(--ease);
 }
-.retrieval-panel {
-  margin-top: 8px;
-  padding: 9px 11px;
-  border: 1px solid rgba(99, 102, 241, .22);
-  border-radius: var(--radius-sm);
-  background: rgba(99, 102, 241, .06);
-  font-size: 11px;
-}
-.retrieval-head { color: var(--primary-soft); font-weight: 600; margin-bottom: 6px; }
-.route-reason { color: var(--text-soft); font-weight: 400; margin-left: 8px; }
-.citation { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 5px; }
-.citation-reason { width: 100%; color: var(--text); font-size: 11px; }
-.citation .tag { padding: 1px 6px; font-size: 10px; }
-.citation-meta { color: var(--text-soft); }
-.citation-excerpt { width: 100%; color: var(--text-soft); line-height: 1.5; }
-.msg-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 7px;
-  padding: 0 4px;
-}
-.tts-btn {
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-soft);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.tts-btn:hover:not(:disabled) {
-  color: var(--primary-soft);
-  border-color: rgba(99, 102, 241, 0.4);
-  background: rgba(99, 102, 241, 0.1);
-}
-.tts-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.tts-err {
-  font-size: 11px;
-  color: var(--danger);
-}
-
-/* markdown 内容 */
-.md :deep(p) {
-  margin: 0 0 8px;
-}
-.md :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.md :deep(pre) {
-  background: rgba(0, 0, 0, 0.4);
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  overflow-x: auto;
-  margin: 8px 0;
-  font-size: 13px;
-  border: 1px solid var(--border);
-}
-.md :deep(code) {
-  font-family: 'Cascadia Code', Consolas, monospace;
-}
-.md :deep(:not(pre) > code) {
-  background: var(--bg-hover);
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-  font-size: 13px;
-}
-.md :deep(ul),
-.md :deep(ol) {
-  padding-left: 20px;
-  margin: 6px 0;
-}
-.md :deep(li) {
-  margin: 4px 0;
-}
-.md :deep(h1),
-.md :deep(h2),
-.md :deep(h3) {
-  margin: 12px 0 6px;
-  font-size: 16px;
-}
-.md :deep(strong) {
-  color: #fff;
-}
-
+.act:hover, .act.on { color: var(--primary-soft); background: var(--primary-bg); }
+.act:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.route { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-dim); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citations { margin-top: 8px; display: grid; gap: 8px; }
+.citation { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-soft); border: 1px solid var(--border); }
+.excerpt { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-soft); }
 @media (max-width: 768px) {
-  .bubble-wrap {
-    max-width: 84%;
-  }
+  .body { max-width: 88%; }
+  .avatar { width: 30px; height: 30px; }
 }
 </style>

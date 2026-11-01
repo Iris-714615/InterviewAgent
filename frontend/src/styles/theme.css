@@ -1,0 +1,117 @@
+/* =====================================================================
+   InterviewAgent Design System v2 — 胭脂粉 × 墨黑
+   - 深色：纯黑底 + 胭脂粉 (#FF7CA2) 强调
+   - 浅色：暖白底 + 黑字，粉色用作大块填充，文字用深粉保证对比度
+   - 主题通过 :root[data-theme] 切换；所有文字/背景组合对比度 >= 4.5:1
+   ===================================================================== */
+:root {
+  /* Surface */
+  --bg: #000000;
+  --bg-soft: #0a0a0b;
+  --bg-elevated: #121214;
+  --bg-card: #0d0d0f;
+  --bg-input: #070708;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --bg-glass: rgba(0, 0, 0, 0.86);
+  --overlay: rgba(0, 0, 0, 0.72);
+
+  /* Border */
+  --border: rgba(255, 255, 255, 0.13);
+  --border-strong: rgba(255, 255, 255, 0.26);
+
+  /* Text */
+  --text: #ffffff;
+  --text-soft: #cfcfd6;
+  --text-dim: #9a9aa4;
+  --text-on-primary: #000000;
+
+  /* Brand：胭脂粉 */
+  --primary: #ff7ca2;
+  --primary-soft: #ff7ca2; /* 文字/链接/图标用色（在当前主题底色上保证对比度） */
+  --primary-dim: #ff5c8a;
+  --primary-bg: rgba(255, 124, 162, 0.14);
+  --primary-border: rgba(255, 124, 162, 0.5);
+  --primary-glow: rgba(255, 124, 162, 0.26);
+  --accent: #ffffff;
+  --gradient-primary: linear-gradient(var(--primary), var(--primary));
+  --gradient-soft: linear-gradient(var(--primary-bg), var(--primary-bg));
+  --gradient-hero: linear-gradient(var(--primary-bg), var(--primary-bg));
+
+  /* Semantic */
+  --success: #4ade80;
+  --success-bg: rgba(74, 222, 128, 0.14);
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.14);
+  --danger: #ff5a5a;
+  --danger-bg: rgba(255, 90, 90, 0.15);
+  --info: #6cb6ff;
+  --info-bg: rgba(108, 182, 255, 0.15);
+  --coach: #fbbf24;
+
+  /* Radius */
+  --radius-lg: 20px;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-xs: 7px;
+  --radius-pill: 999px;
+
+  /* Shadow（高对比风格：以描边为主，阴影克制） */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-card: none;
+  --shadow: 0 20px 56px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 0 1px var(--primary-border), 0 8px 28px var(--primary-glow);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur: 0.15s;
+
+  /* Layout */
+  --sidebar-w: 248px;
+  --nav-h: 62px;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23cfcfd6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #fff8fa;
+  --bg-soft: #ffeef3;
+  --bg-elevated: #ffffff;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-active: rgba(0, 0, 0, 0.09);
+  --bg-glass: rgba(255, 248, 250, 0.9);
+  --overlay: rgba(0, 0, 0, 0.45);
+  --border: rgba(0, 0, 0, 0.14);
+  --border-strong: rgba(0, 0, 0, 0.3);
+  --text: #0a0a0a;
+  --text-soft: #404048;
+  --text-dim: #666670;
+  --text-on-primary: #000000;
+  --primary: #ff7ca2;
+  --primary-soft: #b8134e; /* 浅底上的文字粉：对比度 ≈ 6:1 */
+  --primary-dim: #ff5c8a;
+  --primary-bg: rgba(255, 124, 162, 0.2);
+  --primary-border: rgba(214, 40, 100, 0.5);
+  --primary-glow: rgba(255, 124, 162, 0.35);
+  --accent: #0a0a0a;
+  --success: #15803d;
+  --success-bg: rgba(21, 128, 61, 0.11);
+  --warning: #9a5b00;
+  --warning-bg: rgba(154, 91, 0, 0.12);
+  --danger: #c62828;
+  --danger-bg: rgba(198, 40, 40, 0.1);
+  --info: #1d4ed8;
+  --info-bg: rgba(29, 78, 216, 0.1);
+  --coach: #9a5b00;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.1);
+  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.04);
+  --shadow: 0 20px 48px rgba(0, 0, 0, 0.18);
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23404048' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  color-scheme: light;
+}

@@ -2,37 +2,20 @@ import { defineStore } from 'pinia'
 import { createSession, chatStream, evaluate, getSessionMessages, getServiceStatus } from '../api'
 
 // ============ 对话持久化(localStorage) ============
-// 后端 SessionStore 已把消息写入 data/sessions.json,前端只需记住 sessionId,
-// 刷新后通过 getSessionMessages 从后端恢复完整对话,彻底解决刷新丢失问题。
+// 后端 SessionStore 已持久化消息,前端记住 sessionId 与配置,刷新后从后端恢复完整对话。
 const STORAGE_KEY = 'interview_agent_current_session'
-
-function saveToLocal({ sessionId, direction, role, coachMode, messages }) {
-  try {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ sessionId, direction, role, coachMode, messages: (messages ?? loadFromLocal()?.messages ?? []).slice(-40) })
-    )
-  } catch (e) {
-    // localStorage 不可用(隐私模式等),静默降级
-  }
-}
 
 function loadFromLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw)
-  } catch (e) {
+    return raw ? JSON.parse(raw) : null
+  } catch {
     return null
   }
 }
 
 function clearLocal() {
-  try {
-    localStorage.removeItem(STORAGE_KEY)
-  } catch (e) {
-    // ignore
-  }
+  try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
 }
 
 function newMessageId() {
@@ -56,11 +39,12 @@ function normalizeMessage(message) {
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
-    // 当前会话
     sessionId: null,
     direction: 'ai_app_engineer',
+    directionName: '',
+    positionDescription: '',
     role: 'technical',
-    messages: [], // {message_id, role, content, channel, model?}
+    messages: [],
     streaming: false,
     currentModel: null,
     streamMeta: {},
@@ -70,12 +54,9 @@ export const useChatStore = defineStore('chat', {
     runtimeMode: 'normal',
     serviceStatus: null,
     serviceStatusError: '',
-    // 评估结果
     evaluation: null,
     evaluating: false,
-    // 实时辅导模式
     coachMode: false,
-    // 是否刚从历史恢复(用于 UI 提示)
     restored: false
   }),
   getters: {
@@ -83,38 +64,57 @@ export const useChatStore = defineStore('chat', {
     messageCount() {
       return this.interviewMessages.length
     },
+    answerCount() {
+      return this.interviewMessages.filter((m) => m.role === 'user').length
+    },
     hasMessages() {
       return this.interviewMessages.length > 0
     }
   },
   actions: {
+    persist(withMessages = false) {
+      try {
+        const prev = loadFromLocal()
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          sessionId: this.sessionId,
+          direction: this.direction,
+          directionName: this.directionName,
+          positionDescription: this.positionDescription,
+          role: this.role,
+          coachMode: this.coachMode,
+          messages: (withMessages ? this.messages : (prev?.messages ?? [])).slice(-40)
+        }))
+      } catch { /* localStorage 不可用时静默降级 */ }
+    },
+    configure({ direction, directionName, role, positionDescription }) {
+      if (direction) this.direction = direction
+      if (directionName !== undefined) this.directionName = directionName
+      if (role) this.role = role
+      if (positionDescription !== undefined) this.positionDescription = positionDescription
+    },
     async loadServiceStatus() {
       try {
         this.serviceStatus = await getServiceStatus()
         this.runtimeMode = this.serviceStatus.demo_mode ? 'demo' : (this.serviceStatus.status === 'ok' ? 'normal' : 'degraded')
         this.serviceStatusError = ''
-      } catch (err) {
+      } catch {
         this.serviceStatus = null
         this.serviceStatusError = '当前可以继续基础练习'
       }
       return this.serviceStatus
     },
     async startSession() {
-      const data = await createSession(this.direction, this.role)
+      const data = await createSession(this.direction, this.role, this.positionDescription)
       this.sessionId = data.session_id
-      if (!this.messages.length) this.messages = []
+      if (data.direction) this.direction = data.direction
+      if (data.direction_name) this.directionName = data.direction_name
       this.evaluation = null
       this.streamMeta = {}
       this.rag = null
       this.profile = null
       this.demoMode = false
       this.restored = false
-      saveToLocal({
-        sessionId: this.sessionId,
-        direction: this.direction,
-        role: this.role,
-        coachMode: this.coachMode
-      })
+      this.persist()
       return data
     },
     async send(message) {
@@ -123,10 +123,9 @@ export const useChatStore = defineStore('chat', {
         try { await this.startSession() } catch { this.runtimeMode = 'guided' }
       }
       const previous = this.messages.map((m) => ({ role: m.role, content: m.content, channel: m.channel }))
-
       const channel = this.coachMode ? 'coach' : 'interview'
-      this.messages.push(normalizeMessage({ message_id: newMessageId(), role: 'user', content: message, channel }))
-      this.messages.push(normalizeMessage({ message_id: newMessageId(), role: 'assistant', content: '', channel }))
+      this.messages.push(normalizeMessage({ role: 'user', content: message, channel }))
+      this.messages.push(normalizeMessage({ role: 'assistant', content: '', channel }))
       const idx = this.messages.length - 1
 
       this.streaming = true
@@ -167,8 +166,7 @@ export const useChatStore = defineStore('chat', {
             this.messages[idx].fallback = true
           }
           this.streaming = false
-          saveToLocal({ sessionId: this.sessionId, direction: this.direction,
-            role: this.role, coachMode: this.coachMode, messages: this.messages })
+          this.persist(true)
         },
         onError: () => {
           const content = this.messages[idx].content
@@ -182,66 +180,55 @@ export const useChatStore = defineStore('chat', {
           this.messages[idx].route_reason = '基础练习引导'
           this.runtimeMode = 'guided'
           this.streaming = false
-          saveToLocal({ sessionId: this.sessionId, direction: this.direction,
-            role: this.role, coachMode: this.coachMode, messages: this.messages })
+          this.persist(true)
         }
       })
     },
-    async loadHistory(sessionId, info = null) {
-      const msgs = await getSessionMessages(sessionId)
-      this.sessionId = sessionId
-      this.messages = msgs.map(normalizeMessage)
-      // 同步方向/角色,让回顾的对话上下文一致
-      if (info) {
-        this.direction = info.direction
-        this.role = info.role
-      }
+    resetRuntime() {
       this.evaluation = null
       this.currentModel = null
       this.rag = null
       this.profile = null
       this.demoMode = false
-      this.coachMode = false
       this.streaming = false
-      this.restored = true
-      saveToLocal({
-        sessionId: this.sessionId,
-        direction: this.direction,
-        role: this.role,
-        coachMode: this.coachMode
-      })
     },
-    // ============ 刷新后自动恢复 ============
-    // 从 localStorage 读取上次未结束的会话,从后端拉取完整对话记录。
-    // 返回 true 表示已恢复,false 表示无历史可恢复。
+    async loadHistory(sessionId, info = null) {
+      const msgs = await getSessionMessages(sessionId)
+      this.sessionId = sessionId
+      this.messages = msgs.map(normalizeMessage)
+      if (info) {
+        this.direction = info.direction || this.direction
+        this.directionName = info.direction_name || ''
+        this.positionDescription = info.position_description || ''
+        this.role = info.role || this.role
+      }
+      this.resetRuntime()
+      this.coachMode = false
+      this.restored = true
+      this.persist(true)
+    },
+    // 刷新后自动恢复上次未结束的会话；返回是否恢复成功
     async restoreFromLocal() {
       const saved = loadFromLocal()
-      if (!saved) return false
+      if (!saved?.sessionId) return false
+      this.direction = saved.direction || this.direction
+      this.directionName = saved.directionName || ''
+      this.positionDescription = saved.positionDescription || ''
+      this.role = saved.role || this.role
+      this.coachMode = false
       try {
         const msgs = await getSessionMessages(saved.sessionId)
-        // 后端会话已被删除/不存在 → 清理本地记录
         if (!Array.isArray(msgs)) {
           clearLocal()
           return false
         }
         this.sessionId = saved.sessionId
-        this.direction = saved.direction || this.direction
-        this.role = saved.role || this.role
-        this.coachMode = false // 恢复时关闭辅导模式,避免误触
         this.messages = msgs.map(normalizeMessage)
-        this.evaluation = null
-        this.currentModel = null
-        this.rag = null
-        this.profile = null
-        this.routingMetrics = null
-        this.demoMode = false
-        this.streaming = false
-        this.restored = true
-        return this.messages.length > 0
-      } catch (e) {
-        this.sessionId = saved.sessionId || null
-        this.direction = saved.direction || this.direction
-        this.role = saved.role || this.role
+        this.resetRuntime()
+        this.restored = this.messages.length > 0
+        return this.restored
+      } catch {
+        this.sessionId = saved.sessionId
         this.messages = (saved.messages || []).map(normalizeMessage)
         this.runtimeMode = 'guided'
         this.restored = this.messages.length > 0
@@ -265,7 +252,7 @@ export const useChatStore = defineStore('chat', {
         })
         this.evaluation = result
         return result
-      } catch (e) {
+      } catch {
         this.evaluation = {
           status: 'failed', confidence: 0, overall_score: 0,
           dimensions: [], evidence: [], strengths: [], weaknesses: [],
@@ -279,19 +266,12 @@ export const useChatStore = defineStore('chat', {
     },
     toggleCoachMode() {
       this.coachMode = !this.coachMode
-      saveToLocal({
-        sessionId: this.sessionId,
-        direction: this.direction,
-        role: this.role,
-        coachMode: this.coachMode
-      })
+      this.persist()
     },
     reset() {
       this.sessionId = null
       this.messages = []
-      this.evaluation = null
-      this.streaming = false
-      this.currentModel = null
+      this.resetRuntime()
       this.restored = false
       clearLocal()
     }

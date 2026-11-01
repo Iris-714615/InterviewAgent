@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#4f46e5" />
+    <meta name="theme-color" content="#000000" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('interview-agent-theme')
+          if (t !== 'light' && t !== 'dark') t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          document.documentElement.dataset.theme = t
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', t === 'dark' ? '#000000' : '#fff8fa')
+        } catch (e) {}
+      })()
+    </script>
+    <style>
+      html { background: #000 } html[data-theme='light'] { background: #fff8fa }
+      #boot { position: fixed; inset: 0; display: grid; place-items: center; background: inherit }
+      #boot i { width: 28px; height: 28px; background: #ff7ca2; clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); animation: bs 0.9s ease-in-out infinite alternate }
+      @keyframes bs { to { transform: scale(0.6) rotate(45deg) } }
+    </style>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="application-name" content="你的专属面试助手" />
     <meta name="apple-mobile-web-app-title" content="你的专属面试助手" />
@@ -12,7 +28,7 @@
     <title>你的专属面试助手</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app"><div id="boot"><i></i></div></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

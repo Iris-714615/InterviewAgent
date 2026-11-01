@@ -4,17 +4,19 @@ import json
 from typing import AsyncIterator
 from app.agents.prompts import build_interviewer_prompt
 from app.core.llm import ModelRouter, RouteDecision, llm_service
-from app.models.schemas import AbilityProfile, ChatMessage, InterviewDirection, InterviewRole
+from app.models.schemas import AbilityProfile, ChatMessage, InterviewRole
 from app.rag.retriever import format_context_for_prompt, retrieve_context
 
 
 class InterviewerAgent:
-    async def reply(self, user_message: str, direction: InterviewDirection, role: InterviewRole, history: list[ChatMessage],
+    async def reply(self, user_message: str, direction: str, role: InterviewRole, history: list[ChatMessage],
                     use_rag: bool = True, profile: dict | None = None, rag_docs: list | None = None,
-                    session_id: str | None = None, message_id: str | None = None, decision: RouteDecision | None = None) -> AsyncIterator[str]:
+                    session_id: str | None = None, message_id: str | None = None, decision: RouteDecision | None = None,
+                    position_description: str | None = None) -> AsyncIterator[str]:
         docs = rag_docs
         if docs is None: docs, _ = retrieve_context(user_message, session_id, top_k=4, enabled=use_rag)
-        messages: list[dict] = [{"role": "system", "content": build_interviewer_prompt(direction, role, format_context_for_prompt(user_message, docs), profile)}]
+        system = build_interviewer_prompt(direction, role, format_context_for_prompt(user_message, docs), profile, position_description)
+        messages: list[dict] = [{"role": "system", "content": system}]
         messages.extend({"role": m.role.value, "content": m.content} for m in history)
         messages.append({"role": "user", "content": user_message})
         decision = decision or ModelRouter.decide("interviewer", user_message)

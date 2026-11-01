@@ -1,11 +1,14 @@
 """面试会话管理接口"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import asyncio
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.core.config import settings
 from app.rag.vectorstore import vector_store
-from app.models.schemas import InterviewDirection, InterviewRole, SessionCreateRequest, SessionInfo
+from app.catalog.positions import DEFAULT_POSITION, normalize_direction
+from app.models.schemas import InterviewRole, SessionCreateRequest, SessionInfo
 from app.services.session_store import session_store
 
 router = APIRouter(prefix="/interview", tags=["面试会话"])
@@ -13,15 +16,17 @@ router = APIRouter(prefix="/interview", tags=["面试会话"])
 
 @router.post("/sessions", response_model=SessionInfo)
 async def create_session(
-    direction: InterviewDirection = InterviewDirection.AI_APP_ENG,
+    direction: str = Query(DEFAULT_POSITION, max_length=64),
     role: InterviewRole = InterviewRole.TECHNICAL,
     resume_document_id: str | None = None,
     job_document_id: str | None = None,
     company_document_id: str | None = None,
+    position_description: str | None = Query(None, max_length=600),
 ):
-    """创建会话；保留原查询参数契约并支持绑定共享资料。"""
+    """创建会话；保留原查询参数契约，支持任意岗位与绑定共享资料。"""
     try:
-        return session_store.create(direction, role, resume_document_id, job_document_id, company_document_id)
+        return await asyncio.to_thread(session_store.create, direction, role, resume_document_id, job_document_id,
+                                       company_document_id, position_description)
     except ValueError:
         raise HTTPException(422, "绑定文档不存在、类型不匹配或已属于其他会话")
 
@@ -29,7 +34,8 @@ async def create_session(
 @router.post("/sessions/create", response_model=SessionInfo)
 async def create_session_json(req: SessionCreateRequest):
     try:
-        return session_store.create(req.direction, req.role, req.resume_document_id, req.job_document_id, req.company_document_id)
+        return session_store.create(req.direction, req.role, req.resume_document_id, req.job_document_id,
+                                    req.company_document_id, req.position_description)
     except ValueError:
         raise HTTPException(422, "绑定文档不存在、类型不匹配或已属于其他会话")
 
@@ -37,13 +43,13 @@ async def create_session_json(req: SessionCreateRequest):
 @router.get("/sessions", response_model=list[SessionInfo])
 async def list_sessions():
     """列出所有面试会话。"""
-    return session_store.list_all()
+    return await asyncio.to_thread(session_store.list_all)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionInfo)
 async def get_session(session_id: str):
     """获取某场会话信息。"""
-    info = session_store.info(session_id)
+    info = await asyncio.to_thread(session_store.info, session_id)
     if not info:
         raise HTTPException(status_code=404, detail="会话不存在")
     return info
@@ -51,17 +57,20 @@ async def get_session(session_id: str):
 
 @router.get("/metrics")
 async def metrics_overview():
-    return session_store.metrics()
+    return await asyncio.to_thread(session_store.metrics)
 
 
-@router.get("/sessions/{session_id}/metrics")
-async def session_metrics(session_id: str):
+def _session_metrics(session_id: str):
     if not session_store.exists(session_id): raise HTTPException(404, "会话不存在")
     return session_store.metrics(session_id)
 
 
-@router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+@router.get("/sessions/{session_id}/metrics")
+async def session_metrics(session_id: str):
+    return await asyncio.to_thread(_session_metrics, session_id)
+
+
+def _delete_session(session_id: str):
     if not session_store.exists(session_id): raise HTTPException(404, "会话不存在")
     documents = session_store.list_documents(session_id)
     for doc in documents:
@@ -74,10 +83,21 @@ async def delete_session(session_id: str):
     return {"message": "会话及关联数据已清理", "chunks": chunks, "documents": len(documents)}
 
 
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    return await asyncio.to_thread(_delete_session, session_id)
+
+
 @router.get("/growth-summary")
-async def growth_summary(direction: InterviewDirection | None = None, role: InterviewRole | None = None, session_id: str | None = None):
+async def growth_summary(direction: str | None = Query(None, max_length=64), role: InterviewRole | None = None, session_id: str | None = None):
+    return await asyncio.to_thread(_growth_summary, direction, role, session_id)
+
+
+def _growth_summary(direction: str | None, role: InterviewRole | None, session_id: str | None):
     sessions = session_store.list_all()
-    if direction: sessions = [s for s in sessions if s.direction == direction]
+    if direction:
+        target = normalize_direction(direction)
+        sessions = [s for s in sessions if s.direction == target]
     if role: sessions = [s for s in sessions if s.role == role]
     if session_id: sessions = [s for s in sessions if s.session_id == session_id]
     completed = [(s, session_store.get_evaluation(s.session_id)) for s in sessions]
@@ -99,7 +119,8 @@ async def growth_summary(direction: InterviewDirection | None = None, role: Inte
 @router.get("/sessions/{session_id}/messages")
 async def get_messages(session_id: str):
     """获取某场会话的完整对话记录(用于评估)。"""
-    if not session_store.exists(session_id):
-        raise HTTPException(status_code=404, detail="会话不存在")
-    msgs = session_store.get_messages(session_id)
-    return [m.model_dump(mode="json") for m in msgs]
+    def load():
+        if not session_store.exists(session_id):
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return [m.model_dump(mode="json") for m in session_store.get_messages(session_id)]
+    return await asyncio.to_thread(load)

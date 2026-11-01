@@ -3,26 +3,8 @@ from __future__ import annotations
 
 import json
 
-from app.models.schemas import InterviewDirection, InterviewRole
-
-# ============ 方向描述 ============
-DIRECTION_DESC = {
-    InterviewDirection.AI_APP_ENG: (
-        "AI 大模型应用工程师。重点考察:RAG 系统设计、Agent 架构、Prompt 工程、"
-        "模型选型与微调、向量数据库、LangChain/LlamaIndex、上下文工程、"
-        "幻觉治理、成本与延迟优化、AI 应用落地案例。"
-    ),
-    InterviewDirection.AI_DEV: (
-        "AI 应用开发工程师。重点考察:大模型 API 集成、流式输出、Function Calling、"
-        "后端工程化(Python/FastAPI/Node)、并发与限流、SSE/WebSocket、"
-        "Token 计费、缓存策略、AI 接口稳定性、CI/CD。"
-    ),
-    InterviewDirection.AI_PM: (
-        "AI 产品经理。重点考察:AI 能力边界认知、需求拆解与优先级、AI 落地场景挖掘、"
-        "ROI 与效果评估、Prompt 产品化、数据飞轮设计、用户旅程、"
-        "AI 伦理与合规、商业化路径、与算法团队协作。"
-    ),
-}
+from app.catalog.positions import describe_position, normalize_direction
+from app.models.schemas import InterviewRole
 
 # ============ 角色描述 ============
 ROLE_DESC = {
@@ -42,10 +24,11 @@ ROLE_DESC = {
 
 
 def build_interviewer_prompt(
-    direction: InterviewDirection,
+    direction: str,
     role: InterviewRole,
     context: str = "",
     profile: dict | None = None,
+    position_description: str | None = None,
 ) -> str:
     """构建面试官 System Prompt。"""
     profile_context = ""
@@ -57,7 +40,7 @@ def build_interviewer_prompt(
         )
     return (
         "你是一位资深面试官,正在对候选人进行一对一面试。\n\n"
-        f"【面试方向】{DIRECTION_DESC[direction]}\n\n"
+        f"【面试岗位】{describe_position(normalize_direction(getattr(direction, 'value', direction)), position_description)}\n\n"
         f"【面试角色】{ROLE_DESC[role]}\n\n"
         "【面试规则】\n"
         "1. 每次只问 1 个问题,等候选人回答后再追问或进入下一题。\n"
