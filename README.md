@@ -30,6 +30,10 @@
 | ✍️ **简历工坊** | JD 定制简历 | 粘贴 JD + 个人信息，AI 按 STAR 法则生成定制简历；JD 关键词匹配、ATS 诊断、STAR 改写、求职信、针对性面试题、多模板预览与导出 |
 | 📌 **求职看板** | 投递进度管理 | 登录后跟进每个岗位的状态、面试时间与复盘，可一键带 JD 生成简历 |
 | 🔐 **账号体系** | 注册 / 登录 | scrypt 密码哈希 + 自签 token；游客可体验，登录后保存简历与看板 |
+| 🗂️ **题库** | 分类刷题 | 按方向 / 难度筛选、随机抽题、收藏与作答记录 |
+| 🧭 **岗位库** | 热门岗位详情 | 目标岗位可展开查看职责、要求与技能画像，一键带入面试 / 简历 |
+| 🔗 **平台直达** | 求职平台联动 | 按岗位关键词一键跳转 Boss直聘 / 智联招聘 / 猎聘等平台搜索 |
+| 🚀 **落地页** | 首次访问引导 | 痛点 / 爽点 / 痒点文案，引导注册或直接体验 |
 
 > 简历相关接口在未配置 LLM key 或调用失败时，自动降级为本地规则生成，响应中带 `used_ai` 标识。
 
@@ -46,7 +50,8 @@
 | RAG | LangChain + ChromaDB | 向量检索增强生成，`qwen-text-embedding-v4` 向量模型 |
 | TTS | mimo-v2.5-tts | 中文语音合成（默认男声"苏打"） |
 | ASR | faster-whisper | 本地语音识别（免费，支持 CPU/int8 量化） |
-| 存储 | SQLite + JSON 文件 | 会话持久化，进程重启不丢失 |
+| 存储 | SQLite（会话 / 账号 / 简历 / 求职看板） | 进程重启不丢失 |
+| 测试 | pytest | 覆盖鉴权、简历、看板与服务降级 |
 | 文件解析 | pypdf / python-docx | 支持 PDF / Word / Markdown 上传 |
 
 #### 💡 动态模型路由策略
@@ -63,7 +68,7 @@
 |------|---------|
 | 框架 | Vue 3 `<script setup>` + Vue Router 4 + Pinia |
 | 构建 | Vite 5 + vite-plugin-pwa |
-| UI | Apple 极简 × Gemini 深色风，毛玻璃 + 渐变，全自研 CSS |
+| UI | 粉黑强对比深 / 浅双主题（`data-theme` 切换），全自研 CSS 设计系统，骨架屏与空状态，无持续跳动动画 |
 | 图表 | ECharts 5（雷达图） |
 | Markdown | marked.js（面试官回复渲染） |
 
@@ -134,11 +139,21 @@ npm run dev        # 默认 http://localhost:5173
 
 ### 3️⃣ 开始使用
 
-1. 打开 `http://localhost:5173`
+1. 打开 `http://localhost:5173`（首次访问进入落地页，可注册 / 登录或直接体验）
 2. 进入「📚 资料库」上传简历 / 项目笔记（PDF / Word / MD）
 3. 进入「💬 面试间」选择方向与角色，发送「开始面试」
 4. 卡壳时点「🎓 实时辅导」求助教练
 5. 点「结束并评估」生成雷达图报告
+6. 进入「✍️ 简历工坊」粘贴 JD 生成定制简历，在「📌 求职看板」跟进投递
+
+### 运行测试
+
+```bash
+cd backend
+python -m pytest -q        # 后端测试
+cd ../frontend
+npm run build              # 前端构建校验
+```
 
 ---
 
@@ -153,7 +168,11 @@ InterviewAgent/
 │   │   │   ├── config.py             # 配置中心（模型路由 / 路径 / CORS）
 │   │   │   ├── llm.py                # LLM 封装 + 动态模型路由器
 │   │   │   ├── asr.py                # 语音识别（本地/API 双模式）
-│   │   │   └── tts.py                # 语音合成（mimo-v2.5-tts）
+│   │   │   ├── tts.py                # 语音合成（mimo-v2.5-tts）
+│   │   │   └── http_cache.py         # HTTP 缓存头
+│   │   ├── catalog/
+│   │   │   ├── positions.py          # 岗位库数据
+│   │   │   └── questions.py          # 题库数据
 │   │   ├── rag/
 │   │   │   ├── loader.py             # 文件加载与切片
 │   │   │   ├── vectorstore.py        # Chroma 向量库管理
@@ -164,9 +183,15 @@ InterviewAgent/
 │   │   │   ├── evaluation.py         # 评估接口
 │   │   │   ├── knowledge.py          # 资料库管理
 │   │   │   ├── tts.py                # TTS 接口
-│   │   │   └── asr.py                # ASR 接口
+│   │   │   ├── asr.py                # ASR 接口
+│   │   │   ├── auth.py               # 注册 / 登录 / 账号
+│   │   │   ├── resume.py             # 简历工坊（JD 分析 / 生成 / 诊断 / 改写 / 求职信）
+│   │   │   ├── jobs.py               # 求职看板
+│   │   │   ├── positions.py          # 岗位库
+│   │   │   └── questions.py          # 题库
 │   │   ├── services/
-│   │   │   └── session_store.py      # 会话 JSON 持久化
+│   │   │   ├── session_store.py      # 会话持久化（SQLite）
+│   │   │   └── account_store.py      # 账号 / 简历 / 看板存储
 │   │   ├── models/schemas.py         # Pydantic 数据模型
 │   │   └── agents/                   # Agent 编排层
 │   │       ├── interviewer.py        # 面试官 Agent
@@ -174,6 +199,7 @@ InterviewAgent/
 │   │       ├── evaluator.py          # 评估官 Agent
 │   │       ├── router.py             # 统一调度入口
 │   │       └── prompts.py            # System Prompt 模板
+│   ├── tests/                        # pytest 测试
 │   ├── data/                         # 运行时数据（会话/向量库/上传文件）
 │   ├── .env.example                  # 环境变量模板
 │   └── requirements.txt
@@ -185,22 +211,69 @@ InterviewAgent/
 │   │   │   ├── Dashboard.vue         # 总览页（历史 / 得分趋势）
 │   │   │   ├── Chat.vue              # 面试间（对话 / 语音 / 导出）
 │   │   │   ├── Knowledge.vue         # 资料库管理
-│   │   │   └── Report.vue            # 评估报告（雷达图）
+│   │   │   ├── Report.vue            # 评估报告（雷达图）
+│   │   │   ├── QuestionBank.vue      # 题库
+│   │   │   ├── Landing.vue           # 落地页
+│   │   │   ├── Auth.vue              # 登录 / 注册
+│   │   │   ├── Account.vue           # 账号中心
+│   │   │   ├── Resume.vue            # 简历工坊
+│   │   │   └── Jobs.vue              # 求职看板
 │   │   ├── components/
 │   │   │   ├── ChatMessage.vue       # 消息气泡 + 单条朗读
-│   │   │   └── RadarChart.vue        # ECharts 雷达图
+│   │   │   ├── RadarChart.vue        # ECharts 雷达图
+│   │   │   ├── PositionPicker.vue    # 目标岗位选择
+│   │   │   ├── PositionDetailModal.vue # 岗位详情弹层
+│   │   │   ├── PlatformLinks.vue     # 求职平台直达
+│   │   │   ├── JdInsight.vue         # JD 解读
+│   │   │   ├── ResumeForm.vue        # 简历信息表单
+│   │   │   ├── ResumeAnalysis.vue    # 简历匹配 / 诊断
+│   │   │   ├── RingProgress.vue      # 环形进度
+│   │   │   ├── Sparkline.vue         # 迷你趋势图
+│   │   │   └── Icon.vue              # 图标
 │   │   ├── stores/
 │   │   │   ├── chat.js               # 对话状态（含 localStorage 恢复）
-│   │   │   └── knowledge.js          # 资料库状态
+│   │   │   ├── knowledge.js          # 资料库状态
+│   │   │   ├── catalog.js            # 岗位 / 题库状态
+│   │   │   └── auth.js               # 登录态
+│   │   ├── utils/                    # platforms / toast / speech
+│   │   ├── composables/              # useVoiceInput / useSystemAudio
+│   │   ├── worklets/recorder-processor.js # 录音 AudioWorklet
 │   │   ├── api/index.js              # API 封装（fetch + SSE + TTS）
-│   │   ├── router/index.js            # 路由配置
+│   │   ├── router/index.js            # 路由配置（含登录守卫）
 │   │   └── styles/main.css           # 全局样式（深色主题 + 响应式）
 │   ├── index.html                    # PWA meta + viewport
 │   ├── vite.config.js                # Vite 配置（host:true + SSE 代理）
 │   └── package.json
 │
+├── Dockerfile                        # 容器构建
 └── README.md                         # 本文件
 ```
+
+### 页面路由
+
+| 路径 | 页面 | 登录 |
+|------|------|:---:|
+| `/welcome` | 落地页 | 否 |
+| `/login` `/register` | 登录 / 注册 | 否 |
+| `/` | 总览 | 否 |
+| `/chat` | 面试间 | 否 |
+| `/questions` | 题库 | 否 |
+| `/knowledge` | 资料库 | 否 |
+| `/report` | 评估报告 | 否 |
+| `/resume` | 简历工坊 | 否（保存需登录） |
+| `/jobs` | 求职看板 | 是 |
+| `/account` | 账号中心 | 是 |
+
+### API 概览（前缀 `/api/v1`）
+
+| 模块 | 端点 |
+|------|------|
+| auth | `POST /register` `POST /login` `GET/PUT/DELETE /me` |
+| resume | `POST /jd/analyze` `/generate` `/match` `/diagnose` `/rewrite` `/cover-letter` `/interview-questions`；`GET/POST /saved`，`GET/DELETE /saved/{id}` |
+| jobs | `GET/POST ""`，`PUT/DELETE /{job_id}` |
+| positions | `GET ""` `GET /{id}` |
+| questions | `GET ""` `/meta` `/random` `/practices` `/{id}`；`PUT /{id}/favorite`；`POST /{id}/practices` |
+| chat / interview / evaluation / knowledge / tts / asr | 流式对话、会话与指标、评估、资料库、语音合成 / 识别 |
 
 ---
 
