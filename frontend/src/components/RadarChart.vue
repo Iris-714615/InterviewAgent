@@ -28,7 +28,7 @@ function render() {
   const primary = cssVar('--primary', '#ff7ca2')
   const text = cssVar('--text-soft', '#cfcfd6')
   const border = cssVar('--border-strong', cssVar('--border', 'rgba(255,255,255,.2)'))
-  const accent = cssVar('--accent', '#ffffff')
+  const accent = cssVar('--text-dim', '#9a9aa3')
   const baseMap = Object.fromEntries(props.compare.map((d) => [d.name, d.score]))
   const series = [{
     value: props.dimensions.map((d) => d.score),
