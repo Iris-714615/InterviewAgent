@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.api.v1 import auth as auth_api  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.account_store import account_store  # noqa: E402
@@ -27,8 +28,10 @@ PROFILE = {
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "api_key", "")
     account_store.reset(tmp_path / "test.db")
+    auth_api._reset_rate_limit()
     yield TestClient(app)
     account_store.reset()
+    auth_api._reset_rate_limit()
 
 
 def _login(client):
@@ -51,6 +54,13 @@ def test_auth_flow(client):
     assert client.get("/api/v1/auth/me").status_code == 401
     assert client.delete("/api/v1/auth/me", headers=headers).json()["ok"] is True
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
+
+def test_login_rate_limit(client):
+    body = {"email": "nobody@example.com", "password": "whatever"}
+    codes = [client.post("/api/v1/auth/login", json=body).status_code for _ in range(12)]
+    assert codes[0] == 401
+    assert codes[-1] == 429
 
 
 def test_resume_tools(client):
@@ -95,3 +105,31 @@ def test_saved_resumes_and_jobs(client):
     assert len(client.get("/api/v1/jobs", headers=headers).json()["jobs"]) == 1
     assert client.delete(f"/api/v1/jobs/{job['id']}", headers=headers).json()["ok"] is True
     assert client.get("/api/v1/jobs").status_code == 401
+
+
+def test_validation_error_is_friendly(client):
+    r = client.post("/api/v1/auth/login", json={"email": "u@example.com"})
+    body = r.json()
+    assert r.status_code == 422
+    assert body["detail"] == "请检查填写的内容是否完整"
+    assert body["request_id"]
+    assert body["fields"]
+
+
+def test_http_error_has_request_id(client):
+    r = client.get("/api/v1/auth/me")
+    assert r.status_code == 401
+    assert r.json()["request_id"]
+
+
+def test_asr_failure_is_sanitized(client, monkeypatch):
+    from app.api.v1 import asr as asr_api
+
+    async def fake(*args, **kwargs):
+        raise RuntimeError("内部细节")
+
+    monkeypatch.setattr(asr_api.asr_service, "transcribe", fake)
+    r = client.post("/api/v1/asr", files={"file": ("a.webm", b"xx", "audio/webm")})
+    assert r.status_code == 502
+    assert r.json()["detail"] == "语音识别暂时不可用，请稍后重试"
+    assert "内部细节" not in r.text

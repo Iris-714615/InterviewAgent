@@ -7,9 +7,10 @@ import hmac
 import json
 import re
 import secrets
+import threading
 import time
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -94,9 +95,42 @@ def _auth_response(user: dict) -> dict:
     return {"token": make_token(user["id"]), "user": public_user(user)}
 
 
+_RATE_WINDOW = 60  # 秒
+_RATE_LIMIT = 10  # 每窗口每个 key 允许的尝试次数
+_attempts: dict[str, list[float]] = {}
+_attempts_lock = threading.Lock()
+_DUMMY_SALT = "00" * 16
+
+
+def _reset_rate_limit() -> None:
+    with _attempts_lock:
+        _attempts.clear()
+
+
+def _check_rate_limit(*keys: str) -> None:
+    """滑动窗口限流:任一 key 超限即返回 429"""
+    now = time.time()
+    with _attempts_lock:
+        if len(_attempts) > 5000:
+            for k in [k for k, v in _attempts.items() if not v or now - v[-1] > _RATE_WINDOW]:
+                del _attempts[k]
+        for key in keys:
+            hits = [t for t in _attempts.get(key, []) if now - t < _RATE_WINDOW]
+            if len(hits) >= _RATE_LIMIT:
+                _attempts[key] = hits
+                raise HTTPException(status_code=429, detail="尝试过于频繁,请稍后再试")
+            hits.append(now)
+            _attempts[key] = hits
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/register")
-async def register(req: RegisterRequest) -> dict:
+async def register(req: RegisterRequest, request: Request) -> dict:
     email = req.email.strip().lower()
+    _check_rate_limit(f"reg:ip:{_client_ip(request)}")
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
     if account_store.find_user_by_email(email):
@@ -108,9 +142,12 @@ async def register(req: RegisterRequest) -> dict:
 
 
 @router.post("/login")
-async def login(req: LoginRequest) -> dict:
-    user = account_store.find_user_by_email(req.email.strip().lower())
-    expected = hash_password(req.password, user["salt"]) if user else ""
+async def login(req: LoginRequest, request: Request) -> dict:
+    email = req.email.strip().lower()
+    _check_rate_limit(f"login:ip:{_client_ip(request)}", f"login:email:{email}")
+    user = account_store.find_user_by_email(email)
+    # 用户不存在时也执行一次哈希,避免通过响应时间枚举邮箱
+    expected = hash_password(req.password, user["salt"] if user else _DUMMY_SALT)
     if not user or not hmac.compare_digest(expected, user["password_hash"]):
         raise HTTPException(status_code=401, detail="邮箱或密码不正确")
     return _auth_response(user)

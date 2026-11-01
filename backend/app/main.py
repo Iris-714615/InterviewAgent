@@ -8,7 +8,9 @@ import time
 import uuid
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -38,6 +40,8 @@ async def lifespan(app: FastAPI):
     # 启动:确保数据目录存在
     settings.upload_path
     settings.chroma_path
+    if settings.auth_secret.startswith("change-me"):
+        logger.warning("auth_secret 仍为默认值,生产环境请通过环境变量 AUTH_SECRET 设置随机密钥")
     # 预热静态目录缓存,首个请求即可命中
     positions.warm_positions()
     questions.warm_questions()
@@ -62,6 +66,30 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def friendly_validation_error(request: Request, exc: RequestValidationError):
+    request_id = uuid.uuid4().hex[:12]
+    fields = [".".join(str(p) for p in err.get("loc", ()) if p != "body") for err in exc.errors()]
+    logger.info("validation error request_id=%s path=%s fields=%s", request_id, request.url.path, fields)
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "请检查填写的内容是否完整", "fields": fields, "request_id": request_id},
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def unified_http_error(request: Request, exc: StarletteHTTPException):
+    request_id = uuid.uuid4().hex[:12]
+    if exc.status_code >= 500:
+        logger.error("http error request_id=%s path=%s status=%s", request_id, request.url.path, exc.status_code)
+    detail = exc.detail if isinstance(exc.detail, str) else "请求失败，请稍后重试"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": detail, "request_id": request_id},
+        headers=getattr(exc, "headers", None),
+    )
 
 
 @app.exception_handler(Exception)

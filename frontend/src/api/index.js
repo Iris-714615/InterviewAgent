@@ -27,16 +27,51 @@ async function request(url, options = {}) {
   }
   if (!res.ok) {
     let detail = ''
+    let requestId = ''
     try {
       const data = await res.json()
       detail = typeof data?.detail === 'string' ? data.detail : Array.isArray(data?.detail) ? '请检查填写的内容是否完整' : ''
+      requestId = data?.request_id || ''
     } catch { /* ignore */ }
     if (res.status === 401 && token && onUnauthorized) onUnauthorized()
-    const err = new Error(detail || '暂时无法完成此操作，请稍后重试。')
+    const err = new Error(detail || fallbackMessage(res.status))
     err.status = res.status
+    err.requestId = requestId
     throw err
   }
-  return res.json()
+  if (res.status === 204) return null
+  try {
+    return await res.json()
+  } catch {
+    throw new Error('服务返回了无法识别的内容，请稍后重试。')
+  }
+}
+
+function fallbackMessage(status) {
+  if (status === 401) return '登录已失效，请重新登录。'
+  if (status === 403) return '没有权限执行此操作。'
+  if (status === 404) return '请求的内容不存在或已被删除。'
+  if (status === 429) return '操作过于频繁，请稍后再试。'
+  if (status >= 500) return '服务暂时不可用，请稍后重试。'
+  return '暂时无法完成此操作，请稍后重试。'
+}
+
+// 读取错误响应中的 detail(流式/音频接口共用)
+async function readErrorMessage(res) {
+  try {
+    const data = await res.json()
+    if (typeof data?.detail === 'string' && data.detail) return data.detail
+  } catch { /* ignore */ }
+  return fallbackMessage(res.status)
+}
+
+// 直接使用 fetch 的接口(流式/音频)共用:附带 token,401 时触发登录失效处理
+function authHeaders(base = {}) {
+  const token = getToken()
+  return token ? { ...base, Authorization: `Bearer ${token}` } : base
+}
+function handleUnauthorized(res) {
+  if (res.status === 401 && getToken() && onUnauthorized) onUnauthorized()
 }
 
 const post = (url, body, timeoutMs) => request(url, { method: 'POST', body: JSON.stringify(body), timeoutMs })
@@ -170,11 +205,13 @@ export async function chatStream(payload, { onChunk, onMeta, onProfile, onDone, 
     resetIdle()
     const res = await fetch(`${CHAT_BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
       signal: controller.signal
     })
-    if (!res.ok || !res.body) throw new Error('对话服务暂时不可用')
+    handleUnauthorized(res)
+    if (!res.ok) throw new Error(await readErrorMessage(res))
+    if (!res.body) throw new Error('对话服务暂时不可用')
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
@@ -221,10 +258,11 @@ export async function chatStream(payload, { onChunk, onMeta, onProfile, onDone, 
 export async function synthesizeTTS(text) {
   const res = await fetch(`${BASE}/tts`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ text }),
     signal: AbortSignal.timeout(8000)
   })
+  handleUnauthorized(res)
   if (!res.ok || res.status === 204) throw new Error('语音暂不可用')
   const blob = await res.blob()
   return URL.createObjectURL(blob)
@@ -243,14 +281,17 @@ export async function recognizeASR(audioBlob) {
   formData.append('file', audioBlob, `audio.${ext}`)
   const res = await fetch(`${BASE}/asr`, {
     method: 'POST',
+    headers: authHeaders(),
     body: formData
   })
-  if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    throw new Error(`语音识别失败 ${res.status}: ${t}`)
+  handleUnauthorized(res)
+  if (!res.ok) throw new Error(await readErrorMessage(res))
+  try {
+    const data = await res.json()
+    return data.text || ''
+  } catch {
+    throw new Error('语音识别暂时不可用,请稍后重试')
   }
-  const data = await res.json()
-  return data.text || ''
 }
 
 // ============ 模型徽章(省钱可视化) ============

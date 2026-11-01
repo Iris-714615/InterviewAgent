@@ -1,10 +1,14 @@
 """ASR 语音识别接口 - 接收浏览器切片的音频,返回文字"""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from app.core.asr import asr_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/asr", tags=["语音识别"])
 
@@ -31,7 +35,8 @@ async def recognize_audio(file: UploadFile = File(...)):
 
     try:
         text = await asr_service.transcribe(audio_bytes, filename=filename)
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as exc:
+        logger.warning("ASR failed cause=%s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="语音识别暂时不可用，请稍后重试")
 
     return ASRResponse(text=text)
