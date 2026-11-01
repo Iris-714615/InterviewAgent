@@ -1,12 +1,15 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Icon from './components/Icon.vue'
 import { useChatStore } from './stores/chat'
+import { useAuthStore } from './stores/auth'
 import { toasts, dismissToast } from './utils/toast'
 
 const route = useRoute()
+const router = useRouter()
 const chat = useChatStore()
+const auth = useAuthStore()
 const stored = localStorage.getItem('interview-agent-theme')
 const prefersLight = window.matchMedia?.('(prefers-color-scheme: light)').matches
 const theme = ref(stored === 'light' || stored === 'dark' ? stored : prefersLight ? 'light' : 'dark')
@@ -14,12 +17,26 @@ const theme = ref(stored === 'light' || stored === 'dark' ? stored : prefersLigh
 const navs = [
   { name: 'dashboard', path: '/', icon: 'home', label: '工作台' },
   { name: 'chat', path: '/chat', icon: 'message', label: '模拟面试' },
+  { name: 'resume', path: '/resume', icon: 'fileText', label: '简历工坊' },
+  { name: 'jobs', path: '/jobs', icon: 'briefcase', label: '求职看板' },
   { name: 'questions', path: '/questions', icon: 'library', label: '面试题库' },
   { name: 'knowledge', path: '/knowledge', icon: 'folder', label: '资料库' },
   { name: 'report', path: '/report', icon: 'report', label: '评估报告' }
 ]
+const mobileNames = ['dashboard', 'chat', 'resume', 'jobs']
+const mobileNavs = computed(() => {
+  const items = navs.filter((n) => mobileNames.includes(n.name))
+  items.push({
+    name: 'account',
+    path: auth.isLoggedIn ? '/account' : '/login',
+    icon: 'user',
+    label: auth.isLoggedIn ? '我的' : '登录'
+  })
+  return items
+})
 const current = computed(() => route.name)
 const flush = computed(() => route.meta?.flush)
+const bare = computed(() => route.meta?.bare)
 
 const service = computed(() => {
   if (chat.serviceStatusError) return { dot: 'dot-warning', text: '基础练习模式' }
@@ -41,12 +58,25 @@ function toggleTheme() {
 }
 
 onMounted(() => {
+  auth.bindUnauthorized(() => {
+    if (route.meta?.auth) router.push({ path: '/login', query: { redirect: route.fullPath } })
+  })
+  auth.load()
   if (!chat.serviceStatus) chat.loadServiceStatus()
 })
 </script>
 
 <template>
-  <div class="layout">
+  <div v-if="bare">
+    <router-view />
+    <div class="toast-stack" aria-live="polite">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="`toast-${t.type}`" @click="dismissToast(t.id)">
+        <Icon class="alert-icon" :name="t.type === 'success' ? 'checkCircle' : t.type === 'error' ? 'xCircle' : 'info'" :size="17" />
+        <span class="flex-1">{{ t.message }}</span>
+      </div>
+    </div>
+  </div>
+  <div v-else class="layout">
     <aside class="sidebar" aria-label="主导航">
       <router-link to="/" class="brand">
         <span class="brand-mark"><Icon name="sparkle4" :size="18" /></span>
@@ -81,6 +111,14 @@ onMounted(() => {
           <span class="dot" :class="service.dot"></span>
           <span class="flex-1 truncate">{{ service.text }}</span>
         </div>
+        <router-link
+          :to="auth.isLoggedIn ? '/account' : '/login'"
+          class="nav-item"
+          :class="{ active: current === 'account' }"
+        >
+          <Icon class="nav-icon" name="user" :size="18" />
+          <span class="truncate">{{ auth.isLoggedIn ? auth.displayName : '登录 / 注册' }}</span>
+        </router-link>
         <button class="nav-item" type="button" @click="toggleTheme" :aria-label="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'">
           <Icon class="nav-icon" :name="theme === 'dark' ? 'sun' : 'moon'" :size="18" />
           <span>{{ theme === 'dark' ? '浅色模式' : '深色模式' }}</span>
@@ -112,11 +150,11 @@ onMounted(() => {
 
     <nav class="bottom-nav" aria-label="底部导航">
       <router-link
-        v-for="n in navs"
+        v-for="n in mobileNavs"
         :key="n.name"
         :to="n.path"
         class="nav-item"
-        :class="{ active: current === n.name }"
+        :class="{ active: current === n.name || (n.name === 'account' && current === 'login') }"
       >
         <Icon :name="n.icon" :size="21" />
         <span>{{ n.label }}</span>

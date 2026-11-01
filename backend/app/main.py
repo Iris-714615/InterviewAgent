@@ -14,12 +14,15 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.v1 import (
     asr,
+    auth,
     chat,
     evaluation,
     interview,
+    jobs,
     knowledge,
     positions,
     questions,
+    resume,
     tts,
 )
 from app.core.config import settings
@@ -88,6 +91,9 @@ app.include_router(tts.router, prefix=api_prefix)
 app.include_router(asr.router, prefix=api_prefix)
 app.include_router(positions.router, prefix=api_prefix)
 app.include_router(questions.router, prefix=api_prefix)
+app.include_router(auth.router, prefix=api_prefix)
+app.include_router(resume.router, prefix=api_prefix)
+app.include_router(jobs.router, prefix=api_prefix)
 
 
 @app.get("/", tags=["健康检查"])
