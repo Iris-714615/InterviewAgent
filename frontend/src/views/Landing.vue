@@ -16,7 +16,7 @@ function toggleTheme() {
   document.documentElement.dataset.theme = next
   try { localStorage.setItem(THEME_KEY, next) } catch (e) { /* 忽略存储失败 */ }
   const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) meta.setAttribute('content', next === 'dark' ? '#000000' : '#fff8fa')
+  if (meta) meta.setAttribute('content', next === 'dark' ? '#11150f' : '#fff7f4')
 }
 
 // ---------- 痒点：STAR 改写体验 ----------
@@ -153,7 +153,7 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
         <div class="hero-copy reveal">
           <span class="eyebrow"><Icon name="sparkles" :size="14" /> AI 简历 × 模拟面试</span>
           <h1 class="hero-title">
-            投了 100 份简历石沉大海？<br />
+            投了 100 份简历<span class="nowrap">石沉大海？</span><br />
             粘贴 JD，<span class="text-gradient">3 分钟</span>拿到一份为它量身定制的简历
           </h1>
           <p class="hero-sub">
@@ -399,6 +399,67 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
 </template>
 
 <style scoped>
+/* 落地页专属配色：裸桃粉 #FACBC6 / 苔青 #465C47 / 浅松黄 #FFC44F / 艾草青 #5ECD8C */
+.landing {
+  --l-peach: #facbc6;
+  --l-moss: #465c47;
+  --l-moss-deep: #33473a;
+  --l-green: #5ecd8c;
+  --l-yellow: #ffc44f;
+  --l-ink: #24312a;
+
+  /* 浅色：奶油粉底 + 苔青主色 */
+  --bg: #fff7f4;
+  --bg-soft: #fbe8e3;
+  --bg-card: #fffdfb;
+  --bg-elevated: #fffdfb;
+  --bg-glass: rgba(255, 247, 244, 0.9);
+  --bg-hover: rgba(70, 92, 71, 0.08);
+  --bg-active: rgba(70, 92, 71, 0.13);
+  --border: rgba(70, 92, 71, 0.18);
+  --border-strong: rgba(70, 92, 71, 0.5);
+  --text: var(--l-ink);
+  --text-soft: #4c5a4f;
+  --text-dim: #78877b;
+  --primary: var(--l-moss);
+  --primary-soft: var(--l-moss);
+  --primary-dim: var(--l-moss-deep);
+  --primary-bg: rgba(70, 92, 71, 0.1);
+  --primary-border: rgba(70, 92, 71, 0.38);
+  --primary-glow: rgba(250, 203, 198, 0.75);
+  --text-on-primary: var(--l-peach);
+  --accent: var(--l-yellow);
+  --success: #2f8f63;
+  --success-bg: rgba(94, 205, 140, 0.2);
+  --warning: #a8730f;
+  --warning-bg: rgba(255, 196, 79, 0.28);
+}
+[data-theme='dark'] .landing {
+  --bg: #11150f;
+  --bg-soft: #182019;
+  --bg-card: #1c241d;
+  --bg-elevated: #1c241d;
+  --bg-glass: rgba(17, 21, 15, 0.88);
+  --bg-hover: rgba(250, 203, 198, 0.08);
+  --bg-active: rgba(250, 203, 198, 0.14);
+  --border: rgba(250, 203, 198, 0.18);
+  --border-strong: rgba(250, 203, 198, 0.55);
+  --text: #f5e6e2;
+  --text-soft: #cdbab5;
+  --text-dim: #9c8f88;
+  --primary: var(--l-peach);
+  --primary-soft: #ffd9d4;
+  --primary-dim: #e8b8b2;
+  --primary-bg: rgba(250, 203, 198, 0.12);
+  --primary-border: rgba(250, 203, 198, 0.42);
+  --primary-glow: rgba(250, 203, 198, 0.32);
+  --text-on-primary: var(--l-moss-deep);
+  --accent: var(--l-green);
+  --success: #6fd7a0;
+  --success-bg: rgba(94, 205, 140, 0.16);
+  --warning: var(--l-yellow);
+  --warning-bg: rgba(255, 196, 79, 0.16);
+}
 .landing {
   height: 100%;
   overflow-y: auto;
@@ -439,7 +500,8 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
   text-decoration: none;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.nav-links a:hover { background: var(--bg-hover); color: var(--text); }
+.nav-links a:hover { background: var(--bg-hover); color: var(--l-moss); }
+[data-theme='dark'] .landing .nav-links a:hover { color: var(--l-peach); }
 .nav-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 
 /* 滚动显现 */
@@ -451,7 +513,47 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
 .reveal.in { opacity: 1; transform: none; }
 
 /* Hero */
-.hero { position: relative; overflow: hidden; padding: clamp(40px, 8vw, 96px) 0 clamp(48px, 8vw, 96px); }
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(40px, 8vw, 96px) 0 clamp(48px, 8vw, 96px);
+  background: radial-gradient(120% 92% at 50% 0%, rgba(250, 203, 198, 0.62), rgba(250, 203, 198, 0) 64%);
+}
+[data-theme='dark'] .landing .hero { background: radial-gradient(120% 92% at 50% 0%, rgba(250, 203, 198, 0.14), rgba(250, 203, 198, 0) 64%); }
+/* 高亮词用浅松黄记号笔效果 */
+.landing .text-gradient {
+  color: var(--l-ink);
+  background: linear-gradient(transparent 58%, rgba(255, 196, 79, 0.92) 58%);
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+}
+[data-theme='dark'] .landing .text-gradient {
+  color: #f7e9e5;
+  background: linear-gradient(transparent 58%, rgba(250, 203, 198, 0.34) 58%);
+}
+/* 眉题改为桃粉胶囊标签 */
+.landing .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(250, 203, 198, 0.62);
+  border: 1px solid rgba(70, 92, 71, 0.22);
+  color: var(--l-moss);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 12px;
+  font-weight: 700;
+}
+[data-theme='dark'] .landing .eyebrow {
+  background: rgba(250, 203, 198, 0.14);
+  border-color: rgba(250, 203, 198, 0.38);
+  color: #ffd9d4;
+}
+/* 落地页内的蓝色信息标签改用艾草青，避免与粉绿主色打架 */
+.landing .tag-info { background: rgba(94, 205, 140, 0.2); color: #2f8f63; border-color: transparent; }
+[data-theme='dark'] .landing .tag-info { background: rgba(94, 205, 140, 0.16); color: #6fd7a0; }
 .hero-glow {
   position: absolute;
   top: -180px;
@@ -478,6 +580,7 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
   letter-spacing: -0.02em;
   font-weight: 800;
 }
+.nowrap { white-space: nowrap; }
 .hero-sub { margin: 0 0 28px; max-width: 520px; font-size: clamp(15px, 1.6vw, 17px); line-height: 1.75; color: var(--text-soft); }
 .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
 .hero-cta.center { justify-content: center; }
@@ -494,7 +597,8 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
   padding: 18px 20px;
 }
 .jd-card { margin-right: 12%; }
-.resume-card { margin-left: 12%; border-color: var(--primary-border); box-shadow: var(--shadow-glow); }
+.resume-card { margin-left: 12%; border-color: var(--l-moss); background: #fff9f7; box-shadow: var(--shadow-glow); }
+[data-theme='dark'] .landing .resume-card { background: var(--bg-card); border-color: rgba(250, 203, 198, 0.45); }
 .mock-label {
   display: inline-flex;
   align-items: center;
@@ -505,7 +609,8 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
   color: var(--text-dim);
 }
 .jd-line { margin: 0 0 8px; font-size: 14px; line-height: 1.6; color: var(--text-soft); }
-.jd-line mark { background: var(--primary-bg); color: var(--primary-soft); padding: 1px 6px; border-radius: var(--radius-xs); font-weight: 600; }
+.jd-line mark { background: rgba(250, 203, 198, 0.7); color: var(--l-moss); padding: 1px 6px; border-radius: var(--radius-xs); font-weight: 600; }
+[data-theme='dark'] .landing .jd-line mark { background: rgba(250, 203, 198, 0.2); color: #ffd9d4; }
 .jd-skeleton { display: block; height: 8px; margin-top: 10px; border-radius: var(--radius-pill); background: var(--bg-active); }
 .jd-skeleton.short { width: 55%; }
 .flow-arrow {
@@ -554,6 +659,12 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
 .pain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .pain-card { padding: 22px; display: flex; flex-direction: column; gap: 10px; }
 .pain-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: var(--radius); background: var(--primary-bg); color: var(--primary-soft); }
+/* 六张痛点卡按桃粉 / 艾草青 / 浅松黄循环上色 */
+.pain-card:nth-child(3n+1) .pain-icon { background: rgba(250, 203, 198, 0.8); color: var(--l-moss); }
+.pain-card:nth-child(3n+2) .pain-icon { background: rgba(94, 205, 140, 0.32); color: #23603f; }
+.pain-card:nth-child(3n) .pain-icon { background: rgba(255, 196, 79, 0.42); color: #7a5510; }
+[data-theme='dark'] .landing .pain-card:nth-child(3n+2) .pain-icon { color: #d8ffee; }
+[data-theme='dark'] .landing .pain-card:nth-child(3n) .pain-icon { color: #fff1d2; }
 .pain-title { margin: 4px 0 0; font-size: 16px; line-height: 1.5; font-weight: 700; }
 .pain-solve { margin: 0; display: flex; gap: 6px; align-items: flex-start; font-size: 14px; line-height: 1.6; color: var(--text-soft); }
 .pain-solve svg { flex: none; margin-top: 4px; color: var(--success); }
@@ -582,7 +693,7 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
   box-shadow: var(--shadow-card);
 }
 .ui-before { padding: 12px 14px; border-radius: var(--radius); background: var(--bg-active); color: var(--text-dim); font-size: 14px; text-decoration: line-through; text-decoration-color: var(--border-strong); }
-.ui-arrow { align-self: center; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: var(--text-on-primary); }
+.ui-arrow { align-self: center; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--l-yellow); color: var(--l-moss-deep); }
 .ui-after { padding: 14px; border-radius: var(--radius); background: var(--primary-bg); border: 1px solid var(--primary-border); color: var(--text); font-size: 14px; font-weight: 600; line-height: 1.6; }
 .diag-row { display: grid; grid-template-columns: 76px 1fr 32px; align-items: center; gap: 12px; font-size: 13px; color: var(--text-soft); }
 .diag-row b { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -614,11 +725,17 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
 .step p { margin: 0; font-size: 14px; line-height: 1.7; color: var(--text-soft); }
 .step-n { position: absolute; top: 14px; right: 18px; font-family: var(--font-mono); font-size: 34px; font-weight: 800; color: var(--text-dim); opacity: 0.4; }
 .step-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: var(--radius); background: var(--primary); color: var(--text-on-primary); }
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: clamp(28px, 4vw, 48px); padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-card); }
+.steps .step:nth-child(2) .step-icon { background: var(--l-green); color: var(--l-moss-deep); }
+.steps .step:nth-child(3) .step-icon { background: var(--l-yellow); color: var(--l-moss-deep); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: clamp(28px, 4vw, 48px); padding: 24px; border: 1px solid transparent; border-radius: var(--radius-lg); background: var(--l-peach); }
 .stat { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
-.stat b { font-size: clamp(24px, 3vw, 34px); font-weight: 800; color: var(--primary-soft); font-variant-numeric: tabular-nums; }
-.stat b small { margin-left: 2px; font-size: 14px; font-weight: 600; color: var(--text-dim); }
-.stat span { font-size: 13px; color: var(--text-dim); }
+.stat b { font-size: clamp(24px, 3vw, 34px); font-weight: 800; color: var(--l-moss); font-variant-numeric: tabular-nums; }
+.stat b small { margin-left: 2px; font-size: 14px; font-weight: 600; color: rgba(51, 71, 58, 0.82); }
+.stat span { font-size: 13px; font-weight: 600; color: rgba(51, 71, 58, 0.82); }
+[data-theme='dark'] .landing .stats { background: rgba(250, 203, 198, 0.1); border-color: rgba(250, 203, 198, 0.26); }
+[data-theme='dark'] .landing .stat b { color: #ffd9d4; }
+[data-theme='dark'] .landing .stat b small,
+[data-theme='dark'] .landing .stat span { color: rgba(255, 217, 212, 0.75); }
 
 /* FAQ */
 .faq { display: flex; flex-direction: column; gap: 10px; }
@@ -648,16 +765,16 @@ onBeforeUnmount(() => { if (io) io.disconnect() })
   overflow: hidden;
   padding: clamp(36px, 6vw, 72px) clamp(20px, 4vw, 48px);
   border-radius: var(--radius-lg);
-  background: var(--primary);
-  color: var(--text-on-primary);
+  background: var(--l-moss);
+  color: var(--l-peach);
   text-align: center;
   box-shadow: var(--shadow-glow);
 }
-.final-card h2 { margin: 0 0 10px; font-size: clamp(24px, 3.6vw, 38px); line-height: 1.25; font-weight: 800; }
+.final-card h2 { margin: 0 0 10px; font-size: clamp(24px, 3.6vw, 38px); line-height: 1.25; font-weight: 800; color: var(--l-peach); }
 .final-card p { margin: 0 0 26px; font-size: clamp(14px, 1.6vw, 17px); }
-.final-btn { background: var(--text-on-primary); color: #ff9fbd; border: 1px solid transparent; font-weight: 700; }
+.final-btn { background: var(--l-yellow); color: var(--l-moss-deep); border: 1px solid transparent; font-weight: 700; }
 .final-btn:hover { opacity: 0.9; }
-.final-ghost { background: transparent; color: var(--text-on-primary); border: 1px solid currentColor; }
+.final-ghost { background: transparent; color: var(--l-peach); border: 1px solid rgba(250, 203, 198, 0.62); }
 .final-ghost:hover { opacity: 0.8; }
 .footer { border-top: 1px solid var(--border); padding: 24px 0; }
 .footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
