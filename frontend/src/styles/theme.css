@@ -77,28 +77,28 @@
 }
 
 :root[data-theme='light'] {
-  /* 与深色模式黑/粉对调：胭脂粉底 + 纯黑字，主色块为黑底粉字 */
-  --bg: #ff7ca2;
-  --bg-soft: #ff8aad;
-  --bg-elevated: #ffb0c6;
-  --bg-card: #ff93b3;
-  --bg-input: #ffc4d4;
-  --bg-hover: rgba(0, 0, 0, 0.08);
-  --bg-active: rgba(0, 0, 0, 0.15);
-  --bg-glass: rgba(255, 124, 162, 0.92);
-  --overlay: rgba(0, 0, 0, 0.55);
-  --border: rgba(0, 0, 0, 0.28);
-  --border-strong: rgba(0, 0, 0, 0.6);
+  /* 极淡粉底 + 纯黑字，主色块为黑底粉字 */
+  --bg: #fff8fa;
+  --bg-soft: #fef0f4;
+  --bg-elevated: #ffffff;
+  --bg-card: #fff4f7;
+  --bg-input: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --bg-glass: rgba(255, 248, 250, 0.92);
+  --overlay: rgba(0, 0, 0, 0.45);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.5);
   --text: #000000;
   --text-soft: #26000e;
-  --text-dim: #4a0f26;
+  --text-dim: #6b3a4d;
   --text-on-primary: #ff7ca2;
   --primary: #000000;
   --primary-soft: #000000;
   --primary-dim: #1c1c1c;
-  --primary-bg: rgba(0, 0, 0, 0.1);
-  --primary-border: rgba(0, 0, 0, 0.6);
-  --primary-glow: rgba(0, 0, 0, 0.22);
+  --primary-bg: rgba(0, 0, 0, 0.06);
+  --primary-border: rgba(0, 0, 0, 0.5);
+  --primary-glow: rgba(0, 0, 0, 0.15);
   --accent: #000000;
   --success: #053a1b;
   --success-bg: rgba(5, 58, 27, 0.14);
@@ -109,10 +109,10 @@
   --info: #0a2480;
   --info-bg: rgba(10, 36, 128, 0.12);
   --coach: #4d2a00;
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.18);
-  --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.16);
-  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.08);
-  --shadow: 0 20px 48px rgba(0, 0, 0, 0.3);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.08);
+  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.04);
+  --shadow: 0 20px 48px rgba(0, 0, 0, 0.16);
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23000000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   color-scheme: light;
 }

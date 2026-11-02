@@ -166,8 +166,7 @@ onMounted(async () => {
         <p class="hero-desc">选择任意岗位或自定义目标职位，AI 面试官会结合你的简历与 JD 实时追问、即时辅导，并在结束后生成多维评估报告。</p>
         <div class="row wrap gap-3 mt-4">
           <button class="btn btn-gradient btn-lg" @click="router.push('/chat')"><Icon name="play" :size="18" /> 开始模拟面试</button>
-          <button class="btn btn-secondary btn-lg" @click="router.push('/questions')"><Icon name="library" :size="18" /> 去刷题库</button>
-          <button class="btn btn-ghost btn-lg" @click="router.push('/questions')"><Icon name="library" :size="18" /> 浏览题库</button>
+          <button class="btn btn-secondary btn-lg" @click="router.push('/questions')"><Icon name="library" :size="18" /> 浏览题库</button>
           <button v-if="chat.hasMessages && chat.sessionId" class="btn btn-ghost btn-lg" @click="router.push('/chat')">
             <Icon name="history" :size="18" /> 继续上次面试
           </button>
@@ -400,15 +399,24 @@ onMounted(async () => {
 
 <style scoped>
 .dash { padding-bottom: 48px; }
-.hero { position: relative; display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; padding: 44px 40px; border-radius: var(--radius-lg); background: var(--gradient-hero), var(--bg-card); border: 1px solid var(--border); box-shadow: var(--shadow-soft); color: var(--text); overflow: hidden; }
-.hero-title { margin: 16px 0 12px; font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1.2; background: var(--gradient-text); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.hero-desc { margin: 0; max-width: 560px; color: var(--text-soft); line-height: 1.8; }
+.hero { position: relative; display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; padding: 40px; border-radius: var(--radius-lg); background: var(--primary); color: var(--text-on-primary); overflow: hidden; }
+.hero-title { margin: 16px 0 12px; font-size: 38px; font-weight: 900; letter-spacing: -.02em; line-height: 1.2; color: var(--text-on-primary); }
+.hero-desc { margin: 0; max-width: 560px; color: var(--text-on-primary); line-height: 1.8; font-weight: 500; }
+.hero-body :deep(.tag) { background: var(--text-on-primary); color: var(--primary); border-color: var(--text-on-primary); }
+.hero-body :deep(.btn-gradient) { background: var(--text-on-primary); color: var(--primary); }
+.hero-body :deep(.btn-gradient:hover:not(:disabled)) { opacity: .88; }
+.hero-body :deep(.btn-secondary) { background: transparent; color: var(--text-on-primary); border: 2px solid var(--text-on-primary); }
+.hero-body :deep(.btn-secondary:hover:not(:disabled)) { background: rgba(128, 128, 128, .2); }
+.hero-body :deep(.btn-ghost) { color: var(--text-on-primary); font-weight: 700; }
+.hero-body :deep(.btn-ghost:hover:not(:disabled)) { background: rgba(128, 128, 128, .2); }
 .hero-side { position: relative; display: flex; align-items: center; justify-content: center; }
-.hero-star { position: absolute; color: var(--primary); opacity: .55; }
+.hero-star { position: absolute; color: var(--text-on-primary); }
 .hero-star.s1 { right: 8px; top: -6px; }
-.hero-star.s2 { right: 0; top: 58px; opacity: .35; }
-.hero-star.s3 { right: 44px; top: 76px; opacity: .3; }
-.hero-card { position: relative; width: 100%; max-width: 320px; padding: 18px; background: var(--bg-elevated); border: 1px solid var(--border); box-shadow: var(--shadow-soft); margin-top: 40px; backdrop-filter: blur(10px); }
+.hero-star.s2 { right: 0; top: 58px; }
+.hero-star.s3 { right: 44px; top: 76px; }
+.hero-card { position: relative; width: 100%; max-width: 320px; padding: 18px; background: var(--text-on-primary); color: var(--primary); border: 0; margin-top: 40px; }
+.hero-card .text-soft { color: var(--primary); opacity: .8; }
+.hero-card .text-primary { color: var(--primary); }
 @media (max-width: 768px) {
   .hero { grid-template-columns: 1fr; padding: 24px 20px; }
   .hero-title { font-size: 28px; }

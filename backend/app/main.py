@@ -128,6 +128,9 @@ app.include_router(jobs.router, prefix=api_prefix)
 
 @app.get("/", tags=["健康检查"])
 async def root():
+    # 单服务部署时首页交给前端 SPA，健康检查统一走 /health
+    if _frontend_dist:
+        return FileResponse(_frontend_dist / "index.html")
     return {"status": "ok", "service": "Interview Agent", "version": "1.0.0"}
 
 
