@@ -79,6 +79,8 @@ const post = (url, body, timeoutMs) => request(url, { method: 'POST', body: JSON
 // ============ 账号 ============
 export const register = (email, password, nickname = '') => post(`${BASE}/auth/register`, { email, password, nickname })
 export const login = (email, password) => post(`${BASE}/auth/login`, { email, password })
+export const registerPhone = (phone, password, nickname = '') => post(`${BASE}/auth/register/phone`, { phone, password, nickname })
+export const loginPhone = (phone, password) => post(`${BASE}/auth/login/phone`, { phone, password })
 export const fetchMe = () => request(`${BASE}/auth/me`)
 export const updateMe = (payload) => request(`${BASE}/auth/me`, { method: 'PUT', body: JSON.stringify(payload) })
 export const deleteMe = () => request(`${BASE}/auth/me`, { method: 'DELETE' })

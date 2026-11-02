@@ -1,0 +1,12 @@
+.git
+.gitignore
+**/node_modules
+frontend/dist
+backend/.venv
+backend/data
+backend/.pytest_cache
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.work
+*.mp4

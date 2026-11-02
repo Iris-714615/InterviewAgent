@@ -4,15 +4,17 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 import time
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import (
     asr,
@@ -192,6 +194,35 @@ def _clear_private_data() -> tuple[int, int]:
 async def privacy_data():
     doc_count, chunks = await asyncio.to_thread(_clear_private_data)
     return {"message": "隐私数据已清理", "documents": doc_count, "chunks": chunks}
+
+
+def _find_frontend_dist() -> Path | None:
+    """定位前端构建产物:优先配置,其次容器与本地常见路径。"""
+    candidates = [Path(settings.frontend_dist_dir)] if settings.frontend_dist_dir else []
+    candidates.append(Path.cwd() / "frontend" / "dist")
+    candidates.append(Path(__file__).resolve().parents[2] / "frontend" / "dist")
+    for path in candidates:
+        if (path / "index.html").is_file():
+            return path.resolve()
+    return None
+
+
+_frontend_dist = _find_frontend_dist()
+if _frontend_dist:
+    if (_frontend_dist / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_frontend_dist / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def frontend_app(full_path: str):
+        """单服务部署:托管 SPA,未命中的前端路由回退到 index.html。"""
+        if full_path.startswith("api/") or full_path.split("/", 1)[0] in {"docs", "redoc", "openapi.json"}:
+            raise HTTPException(status_code=404, detail="接口不存在")
+        target = (_frontend_dist / full_path).resolve() if full_path else _frontend_dist / "index.html"
+        try:
+            target.relative_to(_frontend_dist)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="页面不存在")
+        return FileResponse(target if target.is_file() else _frontend_dist / "index.html")
 
 
 if __name__ == "__main__":

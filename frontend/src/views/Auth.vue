@@ -9,6 +9,8 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const isRegister = computed(() => route.name === 'register')
+const mode = ref('phone')
+const phone = ref('')
 const email = ref('')
 const password = ref('')
 const nickname = ref('')
@@ -17,12 +19,20 @@ const error = ref('')
 
 async function submit() {
   error.value = ''
-  if (!/^\S+@\S+\.\S+$/.test(email.value)) return (error.value = '请输入有效的邮箱')
+  const value = mode.value === 'phone' ? phone.value.replace(/\D/g, '') : email.value.trim()
+  if (mode.value === 'phone' && !/^1[3-9]\d{9}$/.test(value)) return (error.value = '请输入有效的 11 位手机号')
+  if (mode.value === 'email' && !/^\S+@\S+\.\S+$/.test(value)) return (error.value = '请输入有效的邮箱')
   if (password.value.length < 6) return (error.value = '密码至少 6 位')
   loading.value = true
   try {
-    if (isRegister.value) await auth.register(email.value, password.value, nickname.value.trim())
-    else await auth.login(email.value, password.value)
+    if (isRegister.value) {
+      if (mode.value === 'phone') await auth.registerPhone(value, password.value, nickname.value.trim())
+      else await auth.register(value, password.value, nickname.value.trim())
+    } else if (mode.value === 'phone') {
+      await auth.loginPhone(value, password.value)
+    } else {
+      await auth.login(value, password.value)
+    }
     router.replace(route.query.redirect || '/')
   } catch (e) {
     error.value = e.message || '操作失败，请稍后重试'
@@ -46,7 +56,39 @@ async function submit() {
         <span class="field-label">昵称（选填）</span>
         <input v-model="nickname" class="input" maxlength="20" autocomplete="nickname" placeholder="怎么称呼你" />
       </label>
-      <label class="field">
+      <div class="mode-switch" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'phone'"
+          :class="{ active: mode === 'phone' }"
+          @click="mode = 'phone'; error = ''"
+        >
+          手机号
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'email'"
+          :class="{ active: mode === 'email' }"
+          @click="mode = 'email'; error = ''"
+        >
+          邮箱
+        </button>
+      </div>
+      <label v-if="mode === 'phone'" class="field">
+        <span class="field-label">手机号</span>
+        <input
+          v-model="phone"
+          class="input"
+          type="tel"
+          inputmode="numeric"
+          maxlength="11"
+          autocomplete="tel"
+          placeholder="请输入 11 位手机号"
+        />
+      </label>
+      <label v-else class="field">
         <span class="field-label">邮箱</span>
         <input v-model="email" class="input" type="email" autocomplete="email" placeholder="you@example.com" />
       </label>
@@ -104,6 +146,31 @@ async function submit() {
 h1 { margin: 6px 0 0; font-size: 24px; color: var(--text); }
 .sub { margin: 0 0 6px; color: var(--text-soft); font-size: 14px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.mode-switch button {
+  padding: 8px 0;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.mode-switch button.active {
+  background: var(--primary);
+  color: var(--text-on-primary);
+  font-weight: 600;
+}
 .input {
   width: 100%;
   padding: 11px 12px;

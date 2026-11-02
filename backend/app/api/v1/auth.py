@@ -19,7 +19,18 @@ from app.services.account_store import account_store
 router = APIRouter(prefix="/auth", tags=["账号"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
 _ITERATIONS = 120_000
+
+
+def normalize_phone(raw: str) -> str:
+    """去掉空格/横线/国际区号,保留 11 位大陆手机号。"""
+    digits = re.sub(r"\D", "", raw or "")
+    if digits.startswith("0086"):
+        digits = digits[4:]
+    elif len(digits) == 13 and digits.startswith("86"):
+        digits = digits[2:]
+    return digits
 
 
 def hash_password(password: str, salt: str) -> str:
@@ -58,7 +69,8 @@ def parse_token(token: str) -> str | None:
 def public_user(user: dict) -> dict:
     return {
         "id": user["id"],
-        "email": user["email"],
+        "email": user.get("email") or "",
+        "phone": user.get("phone") or "",
         "nickname": user["nickname"],
         "target_role": user.get("target_role", ""),
         "created_at": user["created_at"],
@@ -83,6 +95,17 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: str = Field(..., max_length=120)
+    password: str = Field(..., max_length=128)
+
+
+class PhoneRegisterRequest(BaseModel):
+    phone: str = Field(..., max_length=20)
+    password: str = Field(..., min_length=6, max_length=128)
+    nickname: str = Field(default="", max_length=40)
+
+
+class PhoneLoginRequest(BaseModel):
+    phone: str = Field(..., max_length=20)
     password: str = Field(..., max_length=128)
 
 
@@ -150,6 +173,33 @@ async def login(req: LoginRequest, request: Request) -> dict:
     expected = hash_password(req.password, user["salt"] if user else _DUMMY_SALT)
     if not user or not hmac.compare_digest(expected, user["password_hash"]):
         raise HTTPException(status_code=401, detail="邮箱或密码不正确")
+    return _auth_response(user)
+
+
+@router.post("/register/phone")
+async def register_phone(req: PhoneRegisterRequest, request: Request) -> dict:
+    phone = normalize_phone(req.phone)
+    _check_rate_limit(f"reg:ip:{_client_ip(request)}", f"reg:phone:{phone}")
+    if not _PHONE_RE.match(phone):
+        raise HTTPException(status_code=400, detail="请输入有效的 11 位手机号")
+    if account_store.find_user_by_phone(phone):
+        raise HTTPException(status_code=409, detail="该手机号已注册,请直接登录")
+    salt = secrets.token_hex(16)
+    nickname = req.nickname.strip() or f"求职者{phone[-4:]}"
+    user = account_store.create_user(None, nickname, hash_password(req.password, salt), salt, phone=phone)
+    return _auth_response(user)
+
+
+@router.post("/login/phone")
+async def login_phone(req: PhoneLoginRequest, request: Request) -> dict:
+    phone = normalize_phone(req.phone)
+    _check_rate_limit(f"login:ip:{_client_ip(request)}", f"login:phone:{phone}")
+    if not _PHONE_RE.match(phone):
+        raise HTTPException(status_code=400, detail="请输入有效的 11 位手机号")
+    user = account_store.find_user_by_phone(phone)
+    expected = hash_password(req.password, user["salt"] if user else _DUMMY_SALT)
+    if not user or not hmac.compare_digest(expected, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="手机号或密码不正确")
     return _auth_response(user)
 
 

@@ -56,6 +56,21 @@ def test_auth_flow(client):
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
 
 
+def test_phone_auth_flow(client):
+    body = {"phone": "138-0013-8000", "password": "secret1", "nickname": "小张"}
+    r = client.post("/api/v1/auth/register/phone", json=body)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["user"]["phone"] == "13800138000"
+    assert data["user"]["email"] == ""
+    headers = {"Authorization": f"Bearer {data['token']}"}
+    assert client.get("/api/v1/auth/me", headers=headers).json()["user"]["phone"] == "13800138000"
+    assert client.post("/api/v1/auth/register/phone", json={"phone": "13800138000", "password": "secret1"}).status_code == 409
+    assert client.post("/api/v1/auth/register/phone", json={"phone": "12345", "password": "secret1"}).status_code == 400
+    assert client.post("/api/v1/auth/login/phone", json={"phone": "13800138000", "password": "bad-pass"}).status_code == 401
+    assert client.post("/api/v1/auth/login/phone", json={"phone": "13800138000", "password": "secret1"}).status_code == 200
+
+
 def test_login_rate_limit(client):
     body = {"email": "nobody@example.com", "password": "whatever"}
     codes = [client.post("/api/v1/auth/login", json=body).status_code for _ in range(12)]

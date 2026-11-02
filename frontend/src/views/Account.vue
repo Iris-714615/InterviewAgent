@@ -87,7 +87,10 @@ onMounted(async () => {
         <div class="acc-avatar">{{ (auth.displayName || 'U').slice(0, 1).toUpperCase() }}</div>
         <div class="flex-1">
           <h2>{{ auth.displayName }}</h2>
-          <p class="acc-mail"><Icon name="mail" :size="14" />{{ auth.user?.email }}</p>
+          <p class="acc-mail">
+            <Icon :name="auth.user?.phone ? 'user' : 'mail'" :size="14" />
+            {{ auth.user?.phone || auth.user?.email }}
+          </p>
         </div>
       </div>
       <label class="field">

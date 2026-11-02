@@ -29,7 +29,7 @@
 | 📱 **移动端适配** | PWA 支持 | 响应式布局，可安装到桌面像 App 一样使用 |
 | ✍️ **简历工坊** | JD 定制简历 | 粘贴 JD + 个人信息，AI 按 STAR 法则生成定制简历；JD 关键词匹配、ATS 诊断、STAR 改写、求职信、针对性面试题、多模板预览与导出 |
 | 📌 **求职看板** | 投递进度管理 | 登录后跟进每个岗位的状态、面试时间与复盘，可一键带 JD 生成简历 |
-| 🔐 **账号体系** | 注册 / 登录 | scrypt 密码哈希 + 自签 token；游客可体验，登录后保存简历与看板 |
+| 🔐 **账号体系** | 手机号 / 邮箱注册登录 | 手机号或邮箱 + 密码，PBKDF2 加盐哈希 + 自签 token；游客可体验，登录后保存简历与看板 |
 | 🗂️ **题库** | 分类刷题 | 按方向 / 难度筛选、随机抽题、收藏与作答记录 |
 | 🧭 **岗位库** | 热门岗位详情 | 目标岗位可展开查看职责、要求与技能画像，一键带入面试 / 简历 |
 | 🔗 **平台直达** | 求职平台联动 | 按岗位关键词一键跳转 Boss直聘 / 智联招聘 / 猎聘等平台搜索 |
@@ -268,7 +268,7 @@ InterviewAgent/
 
 | 模块 | 端点 |
 |------|------|
-| auth | `POST /register` `POST /login` `GET/PUT/DELETE /me` |
+| auth | `POST /register` `POST /login` `POST /register/phone` `POST /login/phone` `GET/PUT/DELETE /me` |
 | resume | `POST /jd/analyze` `/generate` `/match` `/diagnose` `/rewrite` `/cover-letter` `/interview-questions`；`GET/POST /saved`，`GET/DELETE /saved/{id}` |
 | jobs | `GET/POST ""`，`PUT/DELETE /{job_id}` |
 | positions | `GET ""` `GET /{id}` |
@@ -356,4 +356,6 @@ cd ../backend && uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 资料库默认使用按会话隔离的本地关键词检索，不依赖嵌入接口，因此外部嵌入服务不可用时仍可上传和检索资料。若部署环境已配置兼容的嵌入模型，可设置 `RAG_VECTOR_ENABLED=true`，并按需指定 `EMBEDDING_API_KEY`、`EMBEDDING_BASE_URL`。向量调用超时或失败会回退到关键词检索；页面显示“本地检索”以区分检索方式。
 
-实时面试与辅导默认使用快速模型，聊天在检索、模型首字和整轮回复上设有超时。外部模型不可用时，系统给出明确标注的基础练习问题，不会把预设问题或固定分数伪装成模型结果。浏览器优先使用本机语音朗读；不支持浏览器语音时才尝试云端语音，云端有短超时。Railway 后端应为 `/app/data` 挂载持久化卷，以保留 SQLite 会话、上传资料和检索索引。
+实时面试与辅导默认使用快速模型，聊天在检索、模型首字和整轮回复上设有超时。外部模型不可用时，系统给出明确标注的基础练习问题，不会把预设问题或固定分数伪装成模型结果。浏览器优先使用本机语音朗读；不支持浏览器语音时才尝试云端语音，云端有短超时。
+
+Railway 使用根目录 `Dockerfile` 单服务部署：先构建 `frontend/dist`，再由 FastAPI 同域托管页面与 `/api`，访问根域名即可使用。应为 `/app/data` 挂载持久化卷，以保留 SQLite 账号、会话、上传资料和检索索引；生产环境通过环境变量设置 `AUTH_SECRET`、`API_KEY`。

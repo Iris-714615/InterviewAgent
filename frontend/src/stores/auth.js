@@ -5,6 +5,8 @@ import {
   setUnauthorizedHandler,
   login as apiLogin,
   register as apiRegister,
+  loginPhone as apiLoginPhone,
+  registerPhone as apiRegisterPhone,
   fetchMe,
   updateMe,
   deleteMe,
@@ -27,6 +29,12 @@ export const useAuthStore = defineStore('auth', {
     },
     async register(email, password, nickname) {
       this._apply(await apiRegister(email, password, nickname))
+    },
+    async loginPhone(phone, password) {
+      this._apply(await apiLoginPhone(phone, password))
+    },
+    async registerPhone(phone, password, nickname) {
+      this._apply(await apiRegisterPhone(phone, password, nickname))
     },
     async load() {
       if (!this.token || this.user) return

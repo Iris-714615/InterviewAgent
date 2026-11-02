@@ -14,7 +14,8 @@ from app.services.session_store import session_store
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
+    email TEXT UNIQUE,
+    phone TEXT,
     nickname TEXT NOT NULL DEFAULT '',
     target_role TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
@@ -71,8 +72,31 @@ class AccountStore:
             self._conn = sqlite3.connect(target, check_same_thread=False, timeout=10)
             self._conn.row_factory = sqlite3.Row
             self._conn.executescript(_SCHEMA)
+            self._migrate_users()
             self._conn.commit()
         return self._conn
+
+    def _migrate_users(self) -> None:
+        """旧库补手机号字段:重建 users 表,保留已有邮箱账号。"""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(users)")}
+        if "phone" not in columns:
+            self._conn.executescript("""
+            ALTER TABLE users RENAME TO users_legacy;
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE,
+                phone TEXT,
+                nickname TEXT NOT NULL DEFAULT '',
+                target_role TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
+            INSERT INTO users(id,email,phone,nickname,target_role,password_hash,salt,created_at)
+            SELECT id,email,NULL,nickname,target_role,password_hash,salt,created_at FROM users_legacy;
+            DROP TABLE users_legacy;
+            """)
+        self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)")
 
     def _run(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -86,11 +110,18 @@ class AccountStore:
             return self._db().execute(sql, params).fetchall()
 
     # ---------- 用户 ----------
-    def create_user(self, email: str, nickname: str, password_hash: str, salt: str) -> dict[str, Any]:
+    def create_user(
+        self,
+        email: str | None,
+        nickname: str,
+        password_hash: str,
+        salt: str,
+        phone: str | None = None,
+    ) -> dict[str, Any]:
         uid = uuid.uuid4().hex
         self._run(
-            "INSERT INTO users(id,email,nickname,password_hash,salt,created_at) VALUES(?,?,?,?,?,?)",
-            (uid, email, nickname, password_hash, salt, time.time()),
+            "INSERT INTO users(id,email,phone,nickname,password_hash,salt,created_at) VALUES(?,?,?,?,?,?,?)",
+            (uid, email, phone, nickname, password_hash, salt, time.time()),
         )
         return self.get_user(uid) or {}
 
@@ -100,6 +131,10 @@ class AccountStore:
 
     def find_user_by_email(self, email: str) -> dict[str, Any] | None:
         rows = self._all("SELECT * FROM users WHERE email=?", (email,))
+        return dict(rows[0]) if rows else None
+
+    def find_user_by_phone(self, phone: str) -> dict[str, Any] | None:
+        rows = self._all("SELECT * FROM users WHERE phone=?", (phone,))
         return dict(rows[0]) if rows else None
 
     def update_user(self, uid: str, fields: dict[str, str]) -> dict[str, Any] | None:
