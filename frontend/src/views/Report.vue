@@ -288,10 +288,13 @@ function exportReport() {
           <div class="radar-block">
             <div class="row">
               <span class="text-sm text-soft">能力雷达</span>
-              <label v-if="compareDims.length || (hasGrowth && !showCompare)" class="switch ml-auto text-xs">
-                <input v-model="showCompare" type="checkbox" />
-                <span></span>对比上一场
-              </label>
+              <div v-if="compareDims.length || (hasGrowth && !showCompare)" class="row gap-2 ml-auto text-xs">
+                <label class="switch">
+                  <input v-model="showCompare" type="checkbox" />
+                  <span></span>
+                </label>
+                <span>对比上一场</span>
+              </div>
             </div>
             <RadarChart v-if="ev.dimensions?.length" :dimensions="ev.dimensions" :compare="compareDims" :height="280" />
             <div v-else class="empty-desc">暂无维度数据</div>

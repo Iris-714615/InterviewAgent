@@ -110,7 +110,7 @@ async function submit() {
         {{ isRegister ? '注册并开始' : '登录' }}
       </button>
 
-      <p class="switch">
+      <p class="auth-switch">
         <template v-if="isRegister">已有账号？<RouterLink to="/login">去登录</RouterLink></template>
         <template v-else>还没有账号？<RouterLink to="/register">免费注册</RouterLink></template>
       </p>
@@ -182,8 +182,8 @@ h1 { margin: 6px 0 0; font-size: 24px; color: var(--text); }
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-.switch { margin: 4px 0 0; text-align: center; font-size: 14px; color: var(--text-soft); }
-.switch a { color: var(--primary); font-weight: 600; margin-left: 4px; }
+.auth-switch { margin: 4px 0 0; text-align: center; font-size: 14px; color: var(--text-soft); width: auto; height: auto; flex: none; }
+.auth-switch a { color: var(--primary); font-weight: 600; margin-left: 4px; }
 .skip { text-align: center; font-size: 13px; color: var(--text-dim); }
 @media (max-width: 480px) {
   .auth-card { padding: 24px 18px; }

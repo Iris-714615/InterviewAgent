@@ -274,10 +274,13 @@ onMounted(() => {
           </div>
 
           <div class="row gap-4 wrap mt-4">
-            <label class="switch text-sm">
-              <input v-model="redact" type="checkbox" />
-              <span></span>自动脱敏（手机号、邮箱、身份证等）
-            </label>
+            <div class="row gap-2 text-sm">
+              <label class="switch">
+                <input v-model="redact" type="checkbox" />
+                <span></span>
+              </label>
+              <span>自动脱敏（手机号、邮箱、身份证等）</span>
+            </div>
             <label class="row gap-2 text-sm text-soft">
               保留
               <input v-model.number="retentionDays" class="input days-input" type="number" min="1" max="3650" />
