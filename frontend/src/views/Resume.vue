@@ -17,10 +17,10 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const TEMPLATES = [
-  { id: 'modern', name: '现代' },
-  { id: 'classic', name: '经典' },
-  { id: 'minimal', name: '极简' },
-  { id: 'tech', name: '技术' },
+  { id: 'modern',  name: '现代',  tag: '紫 · 彩色下划线',        desc: '活力醒目，适合互联网 / 产品岗位' },
+  { id: 'classic', name: '经典',  tag: '黑白 · 双线分隔',        desc: '稳重专业，适合传统行业 / 职能岗' },
+  { id: 'minimal', name: '极简',  tag: '灰阶 · 无边框',          desc: '留白克制，适合设计 / 创意类岗位' },
+  { id: 'tech',    name: '技术',  tag: '深色 · 开发者风',        desc: '暗色终端感，适合技术研发岗位' },
 ]
 
 const blankExp = () => ({ company: '', role: '', period: '', tech: '', situation: '', task: '', action: '', result: '' })
@@ -193,8 +193,102 @@ const printPage = () => window.print()
 
     <div v-show="step === 'edit'" class="gen-bar card">
       <div class="tpls">
-        <button v-for="t in TEMPLATES" :key="t.id" class="tpl" :class="{ on: template === t.id }" @click="template = t.id">{{ t.name }}</button>
+        <button v-for="t in TEMPLATES" :key="t.id" class="tpl-card" :class="{ on: template === t.id }" @click="template = t.id">
+          <div class="tpl-thumb">
+            <!-- 四种风格的微型简历缩略 -->
+            <svg v-if="t.id === 'modern'" viewBox="0 0 160 110" class="thumb-svg">
+              <rect width="160" height="110" fill="#fff"/>
+              <rect x="10" y="10" width="80" height="12" rx="2" fill="#111827"/>
+              <rect x="10" y="25" width="50" height="6" rx="2" fill="#4f46e5"/>
+              <rect x="10" y="34" width="140" height="3" rx="1" fill="#e5e7eb"/>
+              <rect x="10" y="42" width="30" height="5" rx="1" fill="#111827"/>
+              <rect x="10" y="50" width="120" height="2" rx="1" fill="#d1d5db"/>
+              <rect x="10" y="55" width="100" height="2" rx="1" fill="#d1d5db"/>
+              <rect x="10" y="64" width="30" height="5" rx="1" fill="#111827"/>
+              <rect x="10" y="72" width="80" height="2" rx="1" fill="#d1d5db"/>
+              <rect x="10" y="77" width="95" height="2" rx="1" fill="#d1d5db"/>
+              <rect x="10" y="82" width="70" height="2" rx="1" fill="#d1d5db"/>
+              <rect x="10" y="91" width="30" height="5" rx="1" fill="#111827"/>
+              <rect x="10" y="99" width="60" height="2" rx="1" fill="#d1d5db"/>
+              <rect x="10" y="104" width="45" height="2" rx="1" fill="#d1d5db"/>
+              <!-- 紫色下划线 -->
+              <rect x="10" y="38" width="20" height="2" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="60" width="20" height="2" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="87" width="20" height="2" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="107" width="20" height="2" rx="1" fill="#4f46e5"/>
+            </svg>
+            <svg v-else-if="t.id === 'classic'" viewBox="0 0 160 110" class="thumb-svg">
+              <rect width="160" height="110" fill="#fff"/>
+              <rect x="10" y="10" width="70" height="12" rx="1" fill="#111827"/>
+              <rect x="10" y="24" width="40" height="5" rx="1" fill="#6b7280"/>
+              <line x1="10" y1="32" x2="150" y2="32" stroke="#111827" stroke-width="1"/>
+              <rect x="10" y="38" width="28" height="5" rx="1" fill="#111827"/>
+              <line x1="10" y1="46" x2="38" y2="46" stroke="#111827" stroke-width="0.5"/>
+              <rect x="10" y="50" width="130" height="2" rx="1" fill="#e5e7eb"/>
+              <rect x="10" y="54" width="110" height="2" rx="1" fill="#e5e7eb"/>
+              <rect x="10" y="58" width="90" height="2" rx="1" fill="#e5e7eb"/>
+              <rect x="10" y="66" width="28" height="5" rx="1" fill="#111827"/>
+              <line x1="10" y1="74" x2="38" y2="74" stroke="#111827" stroke-width="0.5"/>
+              <rect x="10" y="78" width="80" height="2" rx="1" fill="#e5e7eb"/>
+              <rect x="10" y="82" width="100" height="2" rx="1" fill="#e5e7eb"/>
+              <rect x="10" y="90" width="28" height="5" rx="1" fill="#111827"/>
+              <line x1="10" y1="98" x2="38" y2="98" stroke="#111827" stroke-width="0.5"/>
+              <rect x="10" y="102" width="70" height="2" rx="1" fill="#e5e7eb"/>
+            </svg>
+            <svg v-else-if="t.id === 'minimal'" viewBox="0 0 160 110" class="thumb-svg">
+              <rect width="160" height="110" fill="#fff"/>
+              <rect x="10" y="10" width="75" height="12" rx="2" fill="#111827"/>
+              <rect x="10" y="24" width="45" height="5" rx="1" fill="#6b7280"/>
+              <rect x="10" y="34" width="25" height="5" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="42" width="130" height="2" rx="1" fill="#f3f4f6"/>
+              <rect x="10" y="46" width="115" height="2" rx="1" fill="#f3f4f6"/>
+              <rect x="10" y="54" width="25" height="5" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="62" width="85" height="2" rx="1" fill="#f3f4f6"/>
+              <rect x="10" y="66" width="100" height="2" rx="1" fill="#f3f4f6"/>
+              <rect x="10" y="70" width="75" height="2" rx="1" fill="#f3f4f6"/>
+              <rect x="10" y="78" width="25" height="5" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="86" width="65" height="2" rx="1" fill="#f3f4f6"/>
+              <rect x="10" y="94" width="25" height="5" rx="1" fill="#4f46e5"/>
+              <rect x="10" y="102" width="50" height="2" rx="1" fill="#f3f4f6"/>
+            </svg>
+            <svg v-else-if="t.id === 'tech'" viewBox="0 0 160 110" class="thumb-svg">
+              <rect width="160" height="110" fill="#0f172a"/>
+              <rect x="10" y="10" width="60" height="12" rx="1" fill="#e2e8f0"/>
+              <rect x="10" y="24" width="35" height="5" rx="1" fill="#38bdf8"/>
+              <rect x="10" y="34" width="130" height="2" rx="1" fill="#334155"/>
+              <rect x="10" y="40" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="40" width="8" height="2" rx="0.5" fill="#38bdf8"/>
+              <rect x="25" y="40" width="60" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="45" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="45" width="50" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="55" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="55" width="8" height="2" rx="0.5" fill="#38bdf8"/>
+              <rect x="25" y="55" width="80" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="60" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="60" width="65" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="68" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="68" width="8" height="2" rx="0.5" fill="#38bdf8"/>
+              <rect x="25" y="68" width="70" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="73" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="73" width="55" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="83" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="83" width="8" height="2" rx="0.5" fill="#38bdf8"/>
+              <rect x="25" y="83" width="45" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="88" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="88" width="35" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="96" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="96" width="55" height="2" rx="0.5" fill="#cbd5e1"/>
+              <rect x="10" y="101" width="3" height="2" fill="#475569"/>
+              <rect x="15" y="101" width="40" height="2" rx="0.5" fill="#cbd5e1"/>
+            </svg>
+          </div>
+          <div class="tpl-info">
+            <div class="tpl-name">{{ t.name }}</div>
+            <div class="tpl-tag">{{ t.tag }}</div>
+          </div>
+        </button>
       </div>
+      <div v-if="TEMPLATES.find(x=>x.id===template)" class="tpl-desc">{{ TEMPLATES.find(x=>x.id===template).desc }}</div>
       <label class="ai-switch"><input v-model="useAi" type="checkbox" /> 使用 AI 润色</label>
       <button class="btn btn-primary btn-lg" :disabled="busy.gen" @click="generate">
         <span v-if="busy.gen" class="spinner" />
@@ -297,10 +391,18 @@ const printPage = () => window.print()
 .pane { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pane-head h3 { margin: 0; font-size: 15px; color: var(--text); display: flex; align-items: center; gap: 6px; }
-.gen-bar { display: flex; align-items: center; gap: 16px; padding: 12px 16px; flex-wrap: wrap; position: sticky; bottom: 70px; z-index: 5; background: var(--bg-glass); backdrop-filter: blur(12px); }
-.tpls { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
-.tpl { border: 1px solid var(--border); background: var(--bg-card); color: var(--text-soft); padding: 6px 14px; border-radius: var(--radius-pill); font-size: 13px; cursor: pointer; }
-.tpl.on { border-color: var(--primary); color: var(--primary); background: var(--primary-bg); }
+.gen-bar { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; flex-wrap: wrap; position: sticky; bottom: 70px; z-index: 5; background: var(--bg-glass); backdrop-filter: blur(12px); }
+.tpls { display: flex; gap: 10px; flex: 1 1 100%; flex-wrap: wrap; }
+.tpl-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 2px solid var(--border); background: var(--bg-card); border-radius: var(--radius); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; width: 150px; min-width: 140px; }
+.tpl-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.tpl-card.on { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
+.tpl-thumb { background: #fff; border-radius: 6px; overflow: hidden; aspect-ratio: 160 / 110; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.thumb-svg { width: 100%; height: 100%; display: block; }
+.tpl-info { display: flex; flex-direction: column; gap: 1px; }
+.tpl-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.tpl-tag { font-size: 11px; color: var(--text-dim); }
+.tpl-desc { flex: 1 1 100%; font-size: 12px; color: var(--text-dim); padding: 2px 0 0; }
+.tpl-card.on .tpl-name { color: var(--primary); }
 .ai-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-soft); }
 .preview-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
 .side { display: flex; flex-direction: column; gap: 12px; }
