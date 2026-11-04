@@ -291,7 +291,6 @@ function exportReport() {
               <div v-if="compareDims.length || (hasGrowth && !showCompare)" class="row gap-2 ml-auto text-xs">
                 <label class="switch">
                   <input v-model="showCompare" type="checkbox" />
-                  <span></span>
                 </label>
                 <span>对比上一场</span>
               </div>

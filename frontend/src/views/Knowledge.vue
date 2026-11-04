@@ -277,7 +277,6 @@ onMounted(() => {
             <div class="row gap-2 text-sm">
               <label class="switch">
                 <input v-model="redact" type="checkbox" />
-                <span></span>
               </label>
               <span>自动脱敏（手机号、邮箱、身份证等）</span>
             </div>
